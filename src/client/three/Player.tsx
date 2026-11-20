@@ -10,7 +10,7 @@ import {
   type WallMaterial,
 } from '../../shared/structure';
 import { controls, takeJump } from '../game/controls';
-import { PAD_TOP } from './layout';
+import { CRANE_POS, PAD_TOP } from './layout';
 import { step, storeyOf, type Body, type Collider } from './physics';
 
 type Props = {
@@ -21,6 +21,10 @@ type Props = {
   material: WallMaterial;
   /** Called when the spot in front of the worker changes. */
   onAim: (spec: PieceSpec, level: number) => void;
+  /** Hidden while the worker sits in the crane cab. */
+  visible: boolean;
+  /** Called when the worker walks up to, or away from, the crane. */
+  onNearCrane: (near: boolean) => void;
 };
 
 /** How far in front of the worker the build spot is (m). */
@@ -32,7 +36,15 @@ const EYE = 1.5;
  * a third-person camera that follows. Drag the screen to look around,
  * pinch or scroll to zoom.
  */
-export const Player = ({ colliders, drive, kind, material, onAim }: Props) => {
+export const Player = ({
+  colliders,
+  drive,
+  kind,
+  material,
+  onAim,
+  visible,
+  onNearCrane,
+}: Props) => {
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
   const orbit = useRef<OrbitControls | null>(null);
@@ -52,6 +64,7 @@ export const Player = ({ colliders, drive, kind, material, onAim }: Props) => {
   const armR = useRef<THREE.Mesh>(null);
   const walkPhase = useRef(0);
   const lastAim = useRef('');
+  const nearCrane = useRef(false);
 
   useEffect(() => {
     if (!drive) return;
@@ -132,6 +145,13 @@ export const Player = ({ colliders, drive, kind, material, onAim }: Props) => {
     if (armR.current)
       armR.current.rotation.x = b.climbing ? -2.6 - swing : swing;
 
+    const near =
+      Math.hypot(b.x - CRANE_POS[0], b.z - CRANE_POS[1]) < 4.5 && b.y < 2;
+    if (near !== nearCrane.current) {
+      nearCrane.current = near;
+      onNearCrane(near);
+    }
+
     // The build spot in front of the worker, on the floor they stand on.
     const level = storeyOf(b.y);
     const spec = snapToGrid(
@@ -149,7 +169,7 @@ export const Player = ({ colliders, drive, kind, material, onAim }: Props) => {
   });
 
   return (
-    <group ref={group}>
+    <group ref={group} visible={visible}>
       {/* legs pivot at the hip */}
       <group position={[0, 0.85, 0]}>
         <mesh ref={legL} position={[-0.15, 0, 0]} castShadow>

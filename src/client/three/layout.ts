@@ -8,6 +8,9 @@ export const PAD_TOP = 0.35;
 /** Where the tower crane's mast stands (world x, z). */
 export const CRANE_POS: [number, number] = [11, -7.5];
 
+/** The stack of steel beams and columns the crane picks from (world x, z). */
+export const STACK_POS: [number, number] = [16.5, -9];
+
 const COLUMN = 0.45;
 const BEAM_H = 0.4;
 const SLAB_H = 0.25;

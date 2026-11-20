@@ -37,7 +37,9 @@ import {
 } from '../shared/structure';
 import { SitePanel } from './components/SitePanel';
 import { WorkerHud } from './components/WorkerHud';
+import { CraneHud } from './components/CraneHud';
 import { useKeyboard } from './game/controls';
+import { attachLoad, dropLoad, type CraneLoad } from './game/crane';
 import {
   createLocalService,
   createServerService,
@@ -45,6 +47,7 @@ import {
   type GameView,
   type LocalService,
 } from './game/service';
+import type { CraneAim } from './three/CraneOperator';
 import type { GhostState } from './three/Structure';
 
 const formatLeft = (ms: number) => {
@@ -163,13 +166,58 @@ export const App = () => {
       const r = await service.build(
         aim.state === 'remove'
           ? { op: 'remove', slot: slotKey(aim.spec) }
-          : { op: 'place', piece: aim.spec }
+          : { op: 'place', piece: aim.spec, method: 'hand' }
       );
       setView(r.view);
       if (!r.ok) setNotice(r.reason);
     } catch (e) {
       setNotice(
         e instanceof Error ? e.message : 'The crew dropped it. Try again.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ---- In the crane: lift steel from the stack and set it in place ----
+  const [inCrane, setInCrane] = useState(false);
+  const [nearCrane, setNearCrane] = useState(false);
+  const [craneAim, setCraneAim] = useState<CraneAim | null>(null);
+  const [craneChoice, setCraneChoice] = useState<CraneLoad>('beam');
+  // Mirrors the crane's load so the HUD re-renders when it changes.
+  const [hookLoad, setHookLoad] = useState<CraneLoad | null>(null);
+
+  const craneGhost = useMemo(() => {
+    const spec = craneAim?.target;
+    if (!spec || !pieces || !pads) return null;
+    const c = canPlace(pieces, pads, spec, 'crane');
+    const state: GhostState = c.ok ? 'ok' : 'bad';
+    return { spec, state, reason: c.ok ? null : c.reason };
+  }, [craneAim, pieces, pads]);
+
+  const pickUp = () => {
+    attachLoad(craneChoice);
+    setHookLoad(craneChoice);
+  };
+  const putBack = () => {
+    dropLoad();
+    setHookLoad(null);
+  };
+  const release = async () => {
+    if (!craneGhost || craneGhost.state !== 'ok') return;
+    setBusy(true);
+    try {
+      const r = await service.build({
+        op: 'place',
+        piece: craneGhost.spec,
+        method: 'crane',
+      });
+      setView(r.view);
+      if (r.ok) putBack();
+      else setNotice(r.reason);
+    } catch (e) {
+      setNotice(
+        e instanceof Error ? e.message : 'The load slipped. Try again.'
       );
     } finally {
       setBusy(false);
@@ -337,13 +385,21 @@ export const App = () => {
             material={material}
             onAim={onAim}
             build={
-              !siteMode && aim
-                ? {
-                    level: aim.level,
-                    ghost: { spec: aim.spec, state: aim.state },
-                  }
-                : null
+              siteMode
+                ? null
+                : inCrane
+                  ? craneGhost && {
+                      level: craneGhost.spec.level,
+                      ghost: { spec: craneGhost.spec, state: craneGhost.state },
+                    }
+                  : aim && {
+                      level: aim.level,
+                      ghost: { spec: aim.spec, state: aim.state },
+                    }
             }
+            inCrane={inCrane}
+            onCraneAim={setCraneAim}
+            onNearCrane={setNearCrane}
             siteMode={siteMode}
             tool={tool}
             candidates={candidates}
@@ -433,15 +489,32 @@ export const App = () => {
           </div>
         ) : (
           <div className="pointer-events-auto">
-            <WorkerHud
-              kind={kind}
-              setKind={setKind}
-              material={material}
-              setMaterial={setMaterial}
-              aim={aim}
-              busy={busy}
-              onAct={act}
-            />
+            {inCrane ? (
+              <CraneHud
+                load={hookLoad}
+                choice={craneChoice}
+                setChoice={setCraneChoice}
+                atStack={craneAim?.atStack ?? false}
+                aim={hookLoad ? craneGhost : null}
+                busy={busy}
+                onPickUp={pickUp}
+                onRelease={release}
+                onPutBack={putBack}
+                onExit={() => setInCrane(false)}
+              />
+            ) : (
+              <WorkerHud
+                kind={kind}
+                setKind={setKind}
+                material={material}
+                setMaterial={setMaterial}
+                aim={aim}
+                busy={busy}
+                onAct={act}
+                nearCrane={nearCrane}
+                onEnterCrane={() => setInCrane(true)}
+              />
+            )}
           </div>
         )}
       </div>

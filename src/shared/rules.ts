@@ -6,6 +6,7 @@ import {
   describePiece,
   type Piece,
   type PieceSpec,
+  type PlaceMethod,
 } from './structure.ts';
 import {
   DECORATIONS,
@@ -550,12 +551,13 @@ export const applyPlace = (
   s: TowerState,
   spec: PieceSpec,
   user: string,
-  at: number
+  at: number,
+  method: PlaceMethod = 'hand'
 ): Applied => {
-  const check = canPlace(s.pieces, s.pads, spec);
+  const check = canPlace(s.pieces, s.pads, spec, method);
   if (!check.ok) return { error: check.reason };
   const piece: Piece = { ...spec, by: user, at };
-  const summary = `placed ${describePiece(spec)}`;
+  const summary = `${method === 'crane' ? 'craned in' : 'placed'} ${describePiece(spec)}`;
   return {
     summary,
     state: logged(

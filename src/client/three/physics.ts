@@ -65,7 +65,8 @@ export const buildColliders = (
   site: readonly string[],
   pads: readonly string[],
   pieces: readonly Piece[],
-  crane: [number, number]
+  crane: [number, number],
+  stack: [number, number]
 ): Collider[] => {
   const out: Collider[] = [];
   for (let x = -CITY_RADIUS; x <= CITY_RADIUS; x++) {
@@ -82,6 +83,8 @@ export const buildColliders = (
     }
   }
   out.push(fromBox([crane[0], 20, crane[1]], [2.4, 40, 2.4], true));
+  out.push(fromBox([crane[0], 0.5, crane[1]], [4, 1, 4]));
+  out.push(fromBox([stack[0], 0.6, stack[1]], [2.8, 1.2, 5.6]));
   for (const p of pieces) {
     const b = pieceBox(p);
     out.push(fromBox(b.pos, b.size, p.kind === 'column'));
@@ -93,11 +96,22 @@ const overlapsXZ = (c: Collider, x: number, z: number, r: number) =>
   x + r > c.minX && x - r < c.maxX && z + r > c.minZ && z - r < c.maxZ;
 
 /** The first box that would block a body standing at (x, y, z), if any. */
-const blocker = (cs: readonly Collider[], x: number, y: number, z: number) =>
-  cs.find(
-    (c) =>
-      overlapsXZ(c, x, z, RADIUS) && c.maxY > y + STEP && c.minY < y + HEIGHT
-  );
+const solidAt = (c: Collider, x: number, y: number, z: number) =>
+  overlapsXZ(c, x, z, RADIUS) && c.maxY > y + STEP && c.minY < y + HEIGHT;
+
+/**
+ * The first box that stops a move from (fromX, fromZ) to (x, z), if any.
+ * Boxes the body already stands inside never block, so a worker who spawns
+ * in a wall, or builds a column on their own feet, can always walk out.
+ */
+const blocker = (
+  cs: readonly Collider[],
+  x: number,
+  y: number,
+  z: number,
+  fromX: number,
+  fromZ: number
+) => cs.find((c) => solidAt(c, x, y, z) && !solidAt(c, fromX, y, fromZ));
 
 /** Highest floor under the body that it can step onto from height y. */
 const floorUnder = (
@@ -132,11 +146,11 @@ export const step = (
   // Sideways, one axis at a time so the body slides along walls.
   let climb = false;
   const nx = Math.max(-LIMIT, Math.min(LIMIT, b.x + mx * WALK * dt));
-  const hitX = blocker(cs, nx, b.y, b.z);
+  const hitX = blocker(cs, nx, b.y, b.z, b.x, b.z);
   if (hitX) climb ||= hitX.climbable;
   else b.x = nx;
   const nz = Math.max(-LIMIT, Math.min(LIMIT, b.z + mz * WALK * dt));
-  const hitZ = blocker(cs, b.x, b.y, nz);
+  const hitZ = blocker(cs, b.x, b.y, nz, b.x, b.z);
   if (hitZ) climb ||= hitZ.climbable;
   else b.z = nz;
 
@@ -154,7 +168,11 @@ export const step = (
   const floor = floorUnder(cs, b.x, b.y, b.z);
   // Never fall through a ceiling: stop rising under a box overhead.
   const nextY = b.y + b.vy * dt;
-  if (b.vy > 0 && blocker(cs, b.x, nextY, b.z)) b.vy = 0;
+  if (
+    b.vy > 0 &&
+    cs.some((c) => solidAt(c, b.x, nextY, b.z) && !solidAt(c, b.x, b.y, b.z))
+  )
+    b.vy = 0;
   else b.y = nextY;
   if (b.y <= floor) {
     b.y = floor;

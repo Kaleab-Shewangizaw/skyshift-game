@@ -17,7 +17,7 @@ import {
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
-import type { PieceSpec } from '../../shared/structure';
+import type { PieceSpec, PlaceMethod } from '../../shared/structure';
 import {
   parseSiteResponse,
   parseStateResponse,
@@ -36,7 +36,8 @@ export type SiteResult =
   { ok: true; view: GameView } | { ok: false; reason: string; view: GameView };
 
 export type BuildOp =
-  { op: 'place'; piece: PieceSpec } | { op: 'remove'; slot: string };
+  | { op: 'place'; piece: PieceSpec; method: PlaceMethod }
+  | { op: 'remove'; slot: string };
 
 export type GameService = {
   load(): Promise<GameView>;
@@ -179,7 +180,7 @@ export const createLocalService = (username = 'you') => {
       const at = Date.now();
       return apply(
         op.op === 'place'
-          ? applyPlace(tower, op.piece, username, at)
+          ? applyPlace(tower, op.piece, username, at, op.method)
           : applyRemove(tower, op.slot, username, at)
       );
     },

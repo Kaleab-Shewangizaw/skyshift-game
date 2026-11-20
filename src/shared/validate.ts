@@ -326,7 +326,8 @@ export const parseBuildRequest = (v: unknown): BuildRequest | null => {
   if (typeof v.dateKey !== 'string' || !isValidDateKey(v.dateKey)) return null;
   if (v.op === 'place' && 'piece' in v) {
     const piece = parsePieceSpec(v.piece);
-    return piece ? { dateKey: v.dateKey, op: 'place', piece } : null;
+    const method = 'method' in v && v.method === 'crane' ? 'crane' : 'hand';
+    return piece ? { dateKey: v.dateKey, op: 'place', piece, method } : null;
   }
   if (
     v.op === 'remove' &&

@@ -34,6 +34,9 @@ type Props = {
   } | null;
   busy: boolean;
   onAct: () => void;
+  /** Standing at the crane's foot: offer to climb into the cab. */
+  nearCrane: boolean;
+  onEnterCrane: () => void;
 };
 
 /** On-foot controls: piece hotbar, joystick, build and jump buttons. */
@@ -106,6 +109,14 @@ export const WorkerHud = (p: Props) => {
       <div className="flex items-end justify-between">
         <Joystick />
         <div className="flex flex-col items-end gap-2">
+          {p.nearCrane && (
+            <button
+              className="btn3d btn-blue shine pop-in px-3 py-2 text-[13px] font-bold text-outline-sm"
+              onClick={p.onEnterCrane}
+            >
+              🏗️ Enter crane
+            </button>
+          )}
           <button
             className="btn3d btn-cream h-12 w-12 rounded-full text-lg font-bold"
             aria-label="Jump"

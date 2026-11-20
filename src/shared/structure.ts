@@ -156,8 +156,20 @@ export const touchingCells = (p: PieceSpec): [number, number][] => {
 };
 
 /** Cells under the crane base (it stands at world x≈11, z≈-7.5). */
+/** Cells under the crane base and its steel stack (world x 9..18, z -12..-6). */
 const isCraneCell = (cx: number, cz: number) =>
-  (cx === 3 || cx === 4) && (cz === -4 || cz === -3);
+  cx >= 3 && cx <= 5 && (cz === -4 || cz === -3);
+
+/** How a piece is put in place: carried by hand, or lifted in by the crane. */
+export type PlaceMethod = 'hand' | 'crane';
+
+/** Steel beams, and columns above the ground floor, are too heavy to carry. */
+export const needsCrane = (p: PieceSpec): boolean =>
+  p.kind === 'beam' || (p.kind === 'column' && p.level > 0);
+
+/** The crane only carries steel. */
+export const craneCanCarry = (p: PieceSpec): boolean =>
+  p.kind === 'beam' || p.kind === 'column';
 
 export type CellUse = 'buildable' | 'crane' | 'rough';
 
@@ -263,10 +275,21 @@ export type PlaceCheck = { ok: true } | { ok: false; reason: string };
 export const canPlace = (
   pieces: readonly PieceSpec[],
   pads: readonly string[],
-  p: PieceSpec
+  p: PieceSpec,
+  method: PlaceMethod = 'hand'
 ): PlaceCheck => {
   if (!isWellFormed(p))
     return { ok: false, reason: "That piece doesn't fit there." };
+  if (method === 'hand' && needsCrane(p))
+    return {
+      ok: false,
+      reason:
+        p.kind === 'beam'
+          ? 'Steel beams are too heavy to carry. Lift them in with the crane.'
+          : 'Upper columns go up by crane. Climb into the crane to lift one in.',
+    };
+  if (method === 'crane' && !craneCanCarry(p))
+    return { ok: false, reason: 'The crane only lifts beams and columns.' };
   if (pieces.length >= MAX_PIECES)
     return { ok: false, reason: 'The site is full of pieces for today.' };
   const uses = touchingCells(p).map(([x, z]) => cellUse(pads, x, z));

@@ -14,6 +14,9 @@ export type Controls = {
   keyY: number;
   /** Set by a jump press; the scene clears it once used. */
   jump: boolean;
+  /** Crane hoist from the ▲▼ buttons and R/F keys: 1 up, -1 down. */
+  hoist: number;
+  keyHoist: number;
 };
 
 /** The one set of live controls for this page. */
@@ -23,14 +26,18 @@ export const controls: Controls = {
   keyX: 0,
   keyY: 0,
   jump: false,
+  hoist: 0,
+  keyHoist: 0,
 };
 
 const FORWARD = new Set(['KeyW', 'ArrowUp']);
 const BACK = new Set(['KeyS', 'ArrowDown']);
 const LEFT = new Set(['KeyA', 'ArrowLeft']);
 const RIGHT = new Set(['KeyD', 'ArrowRight']);
+const UP = new Set(['KeyR', 'PageUp']);
+const DOWN = new Set(['KeyF', 'PageDown']);
 
-/** WASD / arrow keys to walk, Space to jump. Off while `enabled` is false. */
+/** WASD / arrows to walk or steer the crane, Space to jump, R/F to hoist. */
 export const useKeyboard = (enabled: boolean) => {
   useEffect(() => {
     if (!enabled) return;
@@ -39,6 +46,7 @@ export const useKeyboard = (enabled: boolean) => {
       const has = (keys: Set<string>) => [...keys].some((k) => down.has(k));
       controls.keyY = (has(FORWARD) ? 1 : 0) - (has(BACK) ? 1 : 0);
       controls.keyX = (has(RIGHT) ? 1 : 0) - (has(LEFT) ? 1 : 0);
+      controls.keyHoist = (has(UP) ? 1 : 0) - (has(DOWN) ? 1 : 0);
     };
     const onDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
@@ -78,4 +86,9 @@ export const takeJump = (): boolean => {
   const j = controls.jump;
   controls.jump = false;
   return j;
+};
+
+/** Hold-to-hoist buttons: 1 raises the hook, -1 lowers it, 0 stops. */
+export const setHoist = (v: number) => {
+  controls.hoist = v;
 };

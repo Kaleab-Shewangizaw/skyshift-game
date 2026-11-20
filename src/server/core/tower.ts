@@ -158,7 +158,7 @@ export const doBuild = (
 ): Promise<SiteResponse> => {
   const r = p.request;
   return r.op === 'place'
-    ? editTower(p, 'place', (t) => applyPlace(t, r.piece, p.username, p.now))
+    ? editTower(p, 'place', (t) => applyPlace(t, r.piece, p.username, p.now, r.method))
     : editTower(p, 'remove', (t) => applyRemove(t, r.slot, p.username, p.now));
 };
 

@@ -4,7 +4,8 @@ A small open-world construction game for Reddit interactive posts (Devvit Web).
 Everyone in a post works on one shared building site each UTC day. You play a
 construction worker in third person: walk the site, dig footings, put up columns,
 beams, floor slabs and walls (brick, stone, glass, timber), and climb what you build.
-The crane and the bulldozer are coming next (see `docs/VISION-3D.md`).
+Climb into the tower crane to lift steel into place. The bulldozer is next (see
+`docs/VISION-3D.md`).
 
 ## Controls
 
@@ -14,6 +15,10 @@ The crane and the bulldozer are coming next (see `docs/VISION-3D.md`).
   goes (green = fits, red = not allowed, with the reason). Press **Place**. Aim at your own
   piece and the button becomes **Take down**.
 - **Climb**: walk into a column to climb it; step off onto a slab at the top.
+- **Crane**: walk to the foot of the crane and tap **Enter crane**. The joystick (or WASD)
+  turns the jib and runs the hook in and out; hold ▲ ▼ (or R / F) to raise and lower it.
+  Choose Beam or Column, lower the hook onto the steel stack beside the crane, **Pick up**,
+  swing it over the building and **Release** when the ghost turns green.
 - **Site work** (top left): demolish neighboring tiles to grow the site, and pour
   foundation pads where you want to build.
 
@@ -45,6 +50,8 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
 
 - The site has a 3 m grid (4×4 cells per 12 m tile) and 3 m storeys. Only poured pads
   are buildable; the center tile starts with one.
+- **By hand**: footings, ground-floor columns, slabs and walls. **By crane only**: steel
+  beams, and columns above the ground floor.
 - **Footing** (ground floor only) → **Column** on a corner next to a footing, or on a
   column below → **Beam** with a column at one end → **Slab** with beams on two sides →
   **Wall** on the ground, or on a beam or slab below.

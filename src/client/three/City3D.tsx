@@ -13,7 +13,8 @@ import {
 } from '../../shared/structure';
 import { City, type SiteFx } from './City';
 import { Crane } from './Crane';
-import { CRANE_POS, PAD_TOP } from './layout';
+import { CraneOperator, type CraneAim } from './CraneOperator';
+import { CRANE_POS, PAD_TOP, STACK_POS } from './layout';
 import { Player } from './Player';
 import { buildColliders } from './physics';
 import { Structure, type BuildView } from './Structure';
@@ -28,8 +29,12 @@ export type City3DProps = {
   kind: PieceKind;
   material: WallMaterial;
   onAim: (spec: PieceSpec, level: number) => void;
-  /** Grid and ghost around the worker (null in site overview). */
+  /** Grid and ghost around the worker or under the hook (null in site overview). */
   build: BuildView | null;
+  /** The worker is up in the crane cab. */
+  inCrane: boolean;
+  onCraneAim: (aim: CraneAim) => void;
+  onNearCrane: (near: boolean) => void;
   /** Site work overview: the camera pulls back over the site and taps pick tiles. */
   siteMode: boolean;
   tool: SiteWork;
@@ -55,7 +60,7 @@ export const City3D = (p: City3DProps) => {
     [site]
   );
   const colliders = useMemo(
-    () => buildColliders(site, pads, pieces, CRANE_POS),
+    () => buildColliders(site, pads, pieces, CRANE_POS, STACK_POS),
     [site, pads, pieces]
   );
   // The crane always stands taller than whatever has been built.
@@ -98,16 +103,20 @@ export const City3D = (p: City3DProps) => {
         x={CRANE_POS[0]}
         z={CRANE_POS[1]}
         buildingTop={buildingTop}
-        target={[0, 0]}
-        wind={p.challenge.condition.wind}
+        operated={p.inCrane}
       />
       <Player
         colliders={colliders}
-        drive={!p.siteMode}
+        drive={!p.siteMode && !p.inCrane}
+        visible={!p.inCrane}
+        onNearCrane={p.onNearCrane}
         kind={p.kind}
         material={p.material}
         onAim={p.onAim}
       />
+      {p.inCrane && !p.siteMode && (
+        <CraneOperator buildingTop={buildingTop} onAim={p.onCraneAim} />
+      )}
       <ViewOffset insetTop={p.insetTop} insetBottom={p.insetBottom} />
       {p.siteMode && (
         <SiteOverview

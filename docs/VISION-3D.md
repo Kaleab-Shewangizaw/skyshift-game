@@ -73,9 +73,11 @@ Each stage ends playable in `npm run play` and on Reddit.
    ✅ **Worker on foot** (done 2026-11-20, `src/client/three/Player.tsx`, `physics.ts`):
    third-person worker, joystick / WASD, jump, collisions, climb columns, build the piece
    in front of you with a live ghost.
-3. **Crane operator.** Enter the crane at its mast; slew / trolley / hoist controls; pick
-   pieces from the stockpile and drop them into a slot. Heavy steel (columns and beams above
-   the ground floor) only arrives by crane.
+3. ✅ **Crane operator** (done 2026-11-20, `game/crane.ts`, `three/CraneOperator.tsx`,
+   `components/CraneHud.tsx`): enter at the mast; joystick slews and runs the trolley, ▲▼
+   hoist; pick a beam or column off the steel stack and release it into the nearest slot.
+   Beams and upper columns are crane-only (`needsCrane` in `structure.ts`; the server takes
+   `method: 'crane'` on trust).
 4. **Bulldozer.** Drivable dozer; pushing into a building or road tile demolishes it.
 5. **Structural rules.** Weight and capacity per piece; load flows down through supports.
    Unsupported pieces fall, overloaded ones crack, glass shatters. Fall/shatter animations.

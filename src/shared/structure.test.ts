@@ -9,6 +9,7 @@ import {
 import {
   buildableCells,
   canPlace,
+  needsCrane,
   cellTile,
   slotKey,
   snapToGrid,
@@ -28,7 +29,8 @@ const piece = (
 const withPad = (): TowerState => ({ ...emptyTower(), pads: ['1,0'] });
 
 const place = (s: TowerState, p: PieceSpec, user = 'ana'): TowerState => {
-  const r = applyPlace(s, p, user, 1);
+  // Steel goes up by crane, like in the game.
+  const r = applyPlace(s, p, user, 1, needsCrane(p) ? 'crane' : 'hand');
   if ('error' in r) throw new Error(`${slotKey(p)}: ${r.error}`);
   return r.state;
 };
@@ -113,4 +115,26 @@ void test('taps snap to the nearest cell, corner or edge', () => {
     snapToGrid('wall', 9.2, 1.5, 0, 'stone'),
     piece('wall', 3, 0, 0, 'z', 'stone')
   );
+});
+
+void test('heavy steel goes up by crane; the crane only lifts steel', () => {
+  let s = withPad();
+  s = place(s, piece('foundation', 3, 0));
+  const beam = piece('beam', 3, 0, 0, 'x');
+  assert.equal(canPlace(s.pieces, s.pads, piece('column', 3, 0)).ok, true); // ground column by hand
+  s = place(s, piece('column', 3, 0));
+  const byHand = canPlace(s.pieces, s.pads, beam);
+  assert.ok(!byHand.ok && /crane/.test(byHand.reason));
+  assert.equal(canPlace(s.pieces, s.pads, beam, 'crane').ok, true);
+  assert.equal(canPlace(s.pieces, s.pads, piece('column', 3, 0, 1)).ok, false);
+  assert.equal(
+    canPlace(s.pieces, s.pads, piece('column', 3, 0, 1), 'crane').ok,
+    true
+  );
+  assert.equal(
+    canPlace(s.pieces, s.pads, piece('foundation', 4, 0), 'crane').ok,
+    false
+  );
+  const r = applyPlace(s, beam, 'ana', 5, 'crane');
+  assert.ok(!('error' in r) && /craned in a beam/.test(r.summary));
 });
