@@ -31,9 +31,12 @@ import {
   WALL_MATERIALS,
   isWellFormed,
   type Dir,
+  type Pallet,
+  type PalletSpec,
   type Piece,
   type PieceKind,
   type PieceSpec,
+  type SteelKind,
   type WallMaterial,
 } from './structure.ts';
 
@@ -56,7 +59,8 @@ export const isDecorId = (v: unknown): v is DecorId =>
 const isShiftKind = (v: unknown): v is ShiftKind =>
   v === 'build' || v === 'reinforce' || v === 'decorate';
 
-const isBuildOp = (v: unknown): v is BuildOp => v === 'place' || v === 'remove';
+const isBuildOp = (v: unknown): v is BuildOp =>
+  v === 'place' || v === 'remove' || v === 'deliver';
 
 const isSiteWork = (v: unknown): v is SiteWork =>
   v === 'demolish' || v === 'prepare';
@@ -138,7 +142,48 @@ const isPieceKind = (v: unknown): v is PieceKind =>
 const isWallMaterial = (v: unknown): v is WallMaterial =>
   typeof v === 'string' && WALL_MATERIALS.some((m) => m === v);
 
-const isDir = (v: unknown): v is Dir => v === 'x' || v === 'z';
+const isDir = (v: unknown): v is Dir =>
+  v === 'x' || v === 'z' || v === '-x' || v === '-z';
+
+const isSteelKind = (v: unknown): v is SteelKind =>
+  v === 'beam' || v === 'column';
+
+/** A crane drop: steel kind and a cell on an upper floor. Shape only; rules check the rest. */
+export const parsePalletSpec = (v: unknown): PalletSpec | null => {
+  if (
+    !isObject(v) ||
+    !('kind' in v) ||
+    !('x' in v) ||
+    !('z' in v) ||
+    !('level' in v)
+  )
+    return null;
+  if (!isSteelKind(v.kind)) return null;
+  const { x, z, level } = v;
+  if (
+    typeof x !== 'number' ||
+    typeof z !== 'number' ||
+    typeof level !== 'number'
+  )
+    return null;
+  if (![x, z, level].every((n) => Number.isInteger(n) && Math.abs(n) <= 60))
+    return null;
+  return { kind: v.kind, x, z, level };
+};
+
+const parsePallet = (v: unknown): Pallet | null => {
+  const spec = parsePalletSpec(v);
+  if (!spec || !isObject(v) || !('left' in v) || !('by' in v) || !('at' in v))
+    return null;
+  if (
+    !isCount(v.left) ||
+    v.left < 1 ||
+    typeof v.by !== 'string' ||
+    !isCount(v.at)
+  )
+    return null;
+  return { ...spec, left: v.left, by: v.by, at: v.at };
+};
 
 /** A placement request: kind, position and the fields that kind needs. Extras dropped. */
 export const parsePieceSpec = (v: unknown): PieceSpec | null => {
@@ -229,6 +274,10 @@ export const parseTower = (v: unknown): TowerState | null => {
     'pieces' in v && Array.isArray(v.pieces)
       ? v.pieces.map(parsePiece).filter((p): p is Piece => p !== null)
       : [];
+  const pallets =
+    'pallets' in v && Array.isArray(v.pallets)
+      ? v.pallets.map(parsePallet).filter((p): p is Pallet => p !== null)
+      : [];
   return {
     floors: okFloors,
     recent: okRecent,
@@ -239,6 +288,7 @@ export const parseTower = (v: unknown): TowerState | null => {
     site,
     pads,
     pieces,
+    pallets,
   };
 };
 
@@ -326,8 +376,11 @@ export const parseBuildRequest = (v: unknown): BuildRequest | null => {
   if (typeof v.dateKey !== 'string' || !isValidDateKey(v.dateKey)) return null;
   if (v.op === 'place' && 'piece' in v) {
     const piece = parsePieceSpec(v.piece);
-    const method = 'method' in v && v.method === 'crane' ? 'crane' : 'hand';
-    return piece ? { dateKey: v.dateKey, op: 'place', piece, method } : null;
+    return piece ? { dateKey: v.dateKey, op: 'place', piece } : null;
+  }
+  if (v.op === 'deliver' && 'pallet' in v) {
+    const pallet = parsePalletSpec(v.pallet);
+    return pallet ? { dateKey: v.dateKey, op: 'deliver', pallet } : null;
   }
   if (
     v.op === 'remove' &&

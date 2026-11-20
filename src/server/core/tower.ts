@@ -5,6 +5,7 @@ import type {
   StateResponse,
 } from '../../shared/api';
 import {
+  applyDeliver,
   applyPlace,
   applyRemove,
   applySiteWork,
@@ -152,14 +153,22 @@ export const doSiteWork = (
     applySiteWork(t, p.work, p.x, p.z, p.username, p.now)
   );
 
-/** Place a piece on the build grid, or take down one of your own. */
+/** Place a piece, take down one of your own, or set down a crane delivery. */
 export const doBuild = (
   p: Editor & { request: BuildRequest }
 ): Promise<SiteResponse> => {
   const r = p.request;
-  return r.op === 'place'
-    ? editTower(p, 'place', (t) => applyPlace(t, r.piece, p.username, p.now, r.method))
-    : editTower(p, 'remove', (t) => applyRemove(t, r.slot, p.username, p.now));
+  if (r.op === 'place')
+    return editTower(p, 'place', (t) =>
+      applyPlace(t, r.piece, p.username, p.now)
+    );
+  if (r.op === 'deliver')
+    return editTower(p, 'deliver', (t) =>
+      applyDeliver(t, r.pallet, p.username, p.now)
+    );
+  return editTower(p, 'remove', (t) =>
+    applyRemove(t, r.slot, p.username, p.now)
+  );
 };
 
 /**

@@ -1,10 +1,5 @@
-import {
-  MAX_LEVEL,
-  STOREY,
-  snapToGrid,
-  type PieceSpec,
-} from '../../shared/structure';
-import { CRANE_POS, PAD_TOP, STACK_POS } from '../three/layout';
+import type { SteelKind } from '../../shared/structure';
+import { CRANE_POS, STACK_POS } from '../three/layout';
 
 // The tower crane, as live state. Like `controls`, it changes every frame and
 // is read by the 3D scene directly, so it lives outside React.
@@ -13,7 +8,8 @@ import { CRANE_POS, PAD_TOP, STACK_POS } from '../three/layout';
 // positive angles turn toward world -z). The trolley runs along the jib
 // (`trolley`, meters from the mast) and the hook hangs at height `hookY`.
 
-export type CraneLoad = 'beam' | 'column';
+/** The crane carries a whole pallet of beams or columns. */
+export type CraneLoad = SteelKind;
 
 export type CraneState = {
   slew: number;
@@ -25,9 +21,9 @@ export type CraneState = {
 export const JIB_LENGTH = 26;
 const MIN_REACH = 4;
 const MAX_REACH = 24;
-const SLEW_SPEED = 0.55;
-const TROLLEY_SPEED = 6;
-const HOIST_SPEED = 6;
+const SLEW_SPEED = 1.1;
+const TROLLEY_SPEED = 11;
+const HOIST_SPEED = 12;
 const HOOK_MIN = 0.8;
 
 /** Mast height for a building whose top is `buildingTop` meters up. */
@@ -74,13 +70,13 @@ export const stepCrane = (
 const clamp = (v: number, lo: number, hi: number) =>
   Math.min(hi, Math.max(lo, v));
 
-/** Is the empty hook low enough over the steel stack to pick something up? */
+/** Is the empty hook roughly over the steel stack? No need to line it up exactly. */
 export const hookAtStack = (): boolean => {
   const h = hookWorld();
   return (
     state.load === null &&
-    Math.hypot(h.x - STACK_POS[0], h.z - STACK_POS[1]) < 4 &&
-    h.y < 4.5
+    Math.hypot(h.x - STACK_POS[0], h.z - STACK_POS[1]) < 6 &&
+    h.y < 14
   );
 };
 
@@ -90,21 +86,4 @@ export const attachLoad = (load: CraneLoad) => {
 
 export const dropLoad = () => {
   state.load = null;
-};
-
-/** How far below the hook the middle of a hanging piece sits. */
-export const HANG: Record<CraneLoad, number> = { beam: 0.9, column: 2.3 };
-
-/**
- * The grid slot the hanging piece would drop into: the nearest slot of its
- * kind, on the storey closest to where it hangs.
- */
-export const craneTarget = (): PieceSpec | null => {
-  if (!state.load) return null;
-  const h = hookWorld();
-  const cy = h.y - HANG[state.load];
-  // Beams sit at the top of their storey; columns fill it.
-  const mid = state.load === 'beam' ? STOREY - 0.2 : STOREY / 2;
-  const level = clamp(Math.round((cy - PAD_TOP - mid) / STOREY), 0, MAX_LEVEL);
-  return snapToGrid(state.load, h.x, h.z, level, null);
 };

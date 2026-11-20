@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
+  facingDir,
   slotKey,
   snapToGrid,
   type PieceKind,
@@ -159,9 +160,10 @@ export const Player = ({
       b.x + Math.sin(b.heading) * REACH,
       b.z + Math.cos(b.heading) * REACH,
       level,
-      material
+      material,
+      facingDir(b.heading)
     );
-    const key = `${slotKey(spec)}|${spec.material ?? ''}|${level}`;
+    const key = `${slotKey(spec)}|${spec.dir ?? ''}|${spec.material ?? ''}|${level}`;
     if (key !== lastAim.current) {
       lastAim.current = key;
       onAim(spec, level);

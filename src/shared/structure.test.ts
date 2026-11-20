@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  applyDeliver,
   applyPlace,
   applyRemove,
   emptyTower,
@@ -9,7 +10,8 @@ import {
 import {
   buildableCells,
   canPlace,
-  needsCrane,
+  deliveryTarget,
+  steelOnFloor,
   cellTile,
   slotKey,
   snapToGrid,
@@ -29,8 +31,7 @@ const piece = (
 const withPad = (): TowerState => ({ ...emptyTower(), pads: ['1,0'] });
 
 const place = (s: TowerState, p: PieceSpec, user = 'ana'): TowerState => {
-  // Steel goes up by crane, like in the game.
-  const r = applyPlace(s, p, user, 1, needsCrane(p) ? 'crane' : 'hand');
+  const r = applyPlace(s, p, user, 1);
   if ('error' in r) throw new Error(`${slotKey(p)}: ${r.error}`);
   return r.state;
 };
@@ -117,24 +118,93 @@ void test('taps snap to the nearest cell, corner or edge', () => {
   );
 });
 
-void test('heavy steel goes up by crane; the crane only lifts steel', () => {
-  let s = withPad();
+const CORNERS: [number, number][] = [
+  [3, 0],
+  [4, 0],
+  [5, 0],
+  [3, 1],
+  [4, 1],
+  [5, 1],
+];
+
+/** Footings, columns, beams and slabs for the 2×1 cells (3..4, 0) up to `levels` storeys. */
+const frame = (start: TowerState, levels: number): TowerState => {
+  let s = start;
   s = place(s, piece('foundation', 3, 0));
-  const beam = piece('beam', 3, 0, 0, 'x');
-  assert.equal(canPlace(s.pieces, s.pads, piece('column', 3, 0)).ok, true); // ground column by hand
-  s = place(s, piece('column', 3, 0));
-  const byHand = canPlace(s.pieces, s.pads, beam);
-  assert.ok(!byHand.ok && /crane/.test(byHand.reason));
-  assert.equal(canPlace(s.pieces, s.pads, beam, 'crane').ok, true);
-  assert.equal(canPlace(s.pieces, s.pads, piece('column', 3, 0, 1)).ok, false);
+  s = place(s, piece('foundation', 4, 0));
+  for (let L = 0; L < levels; L++) {
+    for (const [x, z] of CORNERS) s = place(s, piece('column', x, z, L));
+    for (const x of [3, 4]) {
+      s = place(s, piece('beam', x, 0, L, 'x'));
+      s = place(s, piece('beam', x, 1, L, 'x'));
+    }
+    s = place(s, piece('slab', 3, 0, L));
+    s = place(s, piece('slab', 4, 0, L));
+  }
+  return s;
+};
+
+void test('floors 1 and 2 take steel by hand; higher floors need a crane pallet', () => {
+  let s = frame(withPad(), 2); // two storeys built entirely by hand
+  const col = piece('column', 3, 0, 2);
+  const noSteel = canPlace(s.pieces, s.pads, col, s.pallets);
+  assert.ok(!noSteel.ok && /pallet/.test(noSteel.reason));
+
+  // The crane sets 4 columns down on floor 3 (on the slab of cell 3,0).
+  const target = deliveryTarget(s.pieces, 'column', 10, 12, 1);
+  assert.deepEqual(target, { kind: 'column', x: 3, z: 0, level: 2 });
+  assert.equal(deliveryTarget(s.pieces, 'column', 10, 5, 1)?.level, 1); // below the top slab
+  assert.equal(deliveryTarget(s.pieces, 'column', 30, 12, 1), null); // no slab there
+  const d = applyDeliver(s, { kind: 'column', x: 3, z: 0, level: 2 }, 'bo', 2);
+  assert.ok(!('error' in d) && /4 columns up to floor 3/.test(d.summary));
+  s = d.state;
+  assert.equal(steelOnFloor(s.pallets, 'column', 2), 4);
+
+  // Building from the pallet uses it up; an empty pallet disappears.
+  for (const x of [3, 4, 5]) s = place(s, piece('column', x, 0, 2));
+  assert.equal(steelOnFloor(s.pallets, 'column', 2), 1);
+  s = place(s, piece('column', 3, 1, 2));
+  assert.equal(s.pallets.length, 0);
   assert.equal(
-    canPlace(s.pieces, s.pads, piece('column', 3, 0, 1), 'crane').ok,
-    true
-  );
-  assert.equal(
-    canPlace(s.pieces, s.pads, piece('foundation', 4, 0), 'crane').ok,
+    canPlace(s.pieces, s.pads, piece('column', 4, 1, 2), s.pallets).ok,
     false
   );
-  const r = applyPlace(s, beam, 'ana', 5, 'crane');
-  assert.ok(!('error' in r) && /craned in a beam/.test(r.summary));
+  // The slab can't be removed while a pallet sits on it.
+  const again = applyDeliver(
+    s,
+    { kind: 'beam', x: 3, z: 0, level: 2 },
+    'bo',
+    3
+  );
+  assert.ok(!('error' in again));
+  const r = applyRemove(again.state, slotKey(piece('slab', 3, 0, 1)), 'ana', 4);
+  assert.ok('error' in r);
+  // Pallets only go on slabs.
+  assert.ok(
+    'error' in applyDeliver(s, { kind: 'beam', x: 9, z: 9, level: 2 }, 'bo', 5)
+  );
+});
+
+void test('stairs climb the way you face and need an open stairwell', () => {
+  let s = frame(withPad(), 1);
+  assert.deepEqual(
+    snapToGrid('stairs', 10, 1, 1, null, '-x'),
+    piece('stairs', 3, 0, 1, '-x')
+  );
+  // Ground-floor stairs under an existing slab: blocked.
+  const under = canPlace(s.pieces, s.pads, piece('stairs', 3, 0, 0, 'x'));
+  assert.ok(!under.ok && /stairwell/.test(under.reason));
+  // Upstairs on the slab, with nothing above: fine. Then no slab may close it.
+  s = place(s, piece('stairs', 3, 0, 1, 'z'));
+  assert.equal(
+    canPlace(s.pieces, s.pads, piece('stairs', 3, 0, 1, 'x')).ok,
+    false
+  );
+  const lid = canPlace(s.pieces, s.pads, piece('slab', 3, 0, 1));
+  assert.ok(!lid.ok && /stairwell/.test(lid.reason));
+  // Stairs on bare ground floor work too.
+  assert.equal(
+    canPlace(s.pieces, s.pads, piece('stairs', 2, -2, 0, 'z')).ok,
+    true
+  );
 });

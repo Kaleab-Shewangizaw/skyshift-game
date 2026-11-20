@@ -76,8 +76,12 @@ Each stage ends playable in `npm run play` and on Reddit.
 3. ✅ **Crane operator** (done 2026-11-20, `game/crane.ts`, `three/CraneOperator.tsx`,
    `components/CraneHud.tsx`): enter at the mast; joystick slews and runs the trolley, ▲▼
    hoist; pick a beam or column off the steel stack and release it into the nearest slot.
-   Beams and upper columns are crane-only (`needsCrane` in `structure.ts`; the server takes
-   `method: 'crane'` on trust).
+   Reworked 2026-11-20 (designer's idea): the crane does logistics, the worker builds.
+   Floors 1–2: steel by hand. Floor 3+: the crane drops pallets (6 beams / 4 columns) onto
+   the highest slab under the hook; each beam or column on that floor uses one
+   (`TowerState.pallets`, `POST /api/build` op `deliver`). Faster crane, generous pick-up.
+   ✅ **Stairs** piece: fills a cell, climbs the way the worker faces, needs an open
+   stairwell above; physics are 7 step blocks.
 4. **Bulldozer.** Drivable dozer; pushing into a building or road tile demolishes it.
 5. **Structural rules.** Weight and capacity per piece; load flows down through supports.
    Unsupported pieces fall, overloaded ones crack, glass shatters. Fall/shatter animations.

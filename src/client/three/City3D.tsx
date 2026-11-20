@@ -98,7 +98,12 @@ export const City3D = (p: City3DProps) => {
         fx={p.fx}
         onPickTile={p.siteMode ? p.onPickTile : undefined}
       />
-      <Structure pieces={pieces} pads={pads} build={p.build} />
+      <Structure
+        pieces={pieces}
+        pads={pads}
+        pallets={p.tower.pallets}
+        build={p.build}
+      />
       <Crane
         x={CRANE_POS[0]}
         z={CRANE_POS[1]}

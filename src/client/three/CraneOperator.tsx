@@ -2,22 +2,17 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { slotKey, type PieceSpec } from '../../shared/structure';
 import { controls } from '../game/controls';
-import {
-  crane,
-  craneTarget,
-  hookAtStack,
-  hookWorld,
-  stepCrane,
-} from '../game/crane';
+import { crane, hookAtStack, hookWorld, stepCrane } from '../game/crane';
 
 export type CraneAim = {
-  /** The slot the hanging piece would drop into, if it carries one. */
-  target: PieceSpec | null;
-  /** The empty hook is low over the steel stack. */
+  /** Where the hook is (rounded to half a meter, so React only hears about real moves). */
+  hook: { x: number; y: number; z: number };
+  /** The empty hook is over the steel stack. */
   atStack: boolean;
 };
+
+const half = (n: number) => Math.round(n * 2) / 2;
 
 type Props = {
   buildingTop: number;
@@ -77,12 +72,12 @@ export const CraneOperator = ({ buildingTop, onAim }: Props) => {
       c.update();
     }
 
-    const target = craneTarget();
+    const hook = { x: half(h.x), y: half(h.y), z: half(h.z) };
     const atStack = hookAtStack();
-    const key = `${target ? slotKey(target) : '-'}|${atStack}|${crane().load ?? ''}`;
+    const key = `${hook.x},${hook.y},${hook.z}|${atStack}|${crane().load ?? ''}`;
     if (key !== last.current) {
       last.current = key;
-      onAim({ target, atStack });
+      onAim({ hook, atStack });
     }
   });
 

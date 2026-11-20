@@ -1,13 +1,7 @@
 import { useFrame } from '@react-three/fiber';
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, type Ref } from 'react';
 import * as THREE from 'three';
-import {
-  HANG,
-  JIB_LENGTH,
-  crane,
-  craneTarget,
-  mastHeight,
-} from '../game/crane';
+import { JIB_LENGTH, crane, mastHeight } from '../game/crane';
 import { STACK_POS } from './layout';
 import { latticeTexture } from './textures';
 
@@ -37,8 +31,8 @@ export const Crane = ({ x, z, buildingTop, operated }: Props) => {
   const trolley = useRef<THREE.Group>(null);
   const cable = useRef<THREE.Mesh>(null);
   const hook = useRef<THREE.Group>(null);
-  const beam = useRef<THREE.Mesh>(null);
-  const column = useRef<THREE.Mesh>(null);
+  const beams = useRef<THREE.Group>(null);
+  const columns = useRef<THREE.Group>(null);
 
   const lattice = useMemo(() => {
     const t = latticeTexture();
@@ -62,18 +56,14 @@ export const Crane = ({ x, z, buildingTop, operated }: Props) => {
       cable.current.position.y = -drop / 2;
     }
     if (hook.current) hook.current.position.y = -drop;
-    // The load hangs square to the grid slot it is heading for.
-    const target = craneTarget();
-    if (beam.current) {
-      beam.current.visible = c.load === 'beam';
-      beam.current.position.y = -HANG.beam;
-      beam.current.rotation.y =
-        -c.slew + (target?.dir === 'z' ? Math.PI / 2 : 0);
+    // The pallet hangs square to the city grid, whatever way the jib points.
+    if (beams.current) {
+      beams.current.visible = c.load === 'beam';
+      beams.current.rotation.y = -c.slew;
     }
-    if (column.current) {
-      column.current.visible = c.load === 'column';
-      column.current.position.y = -HANG.column;
-      column.current.rotation.y = -c.slew;
+    if (columns.current) {
+      columns.current.visible = c.load === 'column';
+      columns.current.rotation.y = -c.slew;
     }
   });
 
@@ -162,14 +152,8 @@ export const Crane = ({ x, z, buildingTop, operated }: Props) => {
                 roughness={0.4}
               />
             </mesh>
-            <mesh ref={beam} visible={false} castShadow>
-              <boxGeometry args={[3.45, 0.4, 0.35]} />
-              <meshStandardMaterial color={BEAM} metalness={0.35} />
-            </mesh>
-            <mesh ref={column} visible={false} castShadow>
-              <boxGeometry args={[0.45, 3, 0.45]} />
-              <meshStandardMaterial color={STEEL} metalness={0.5} />
-            </mesh>
+            <HangingPallet ref={beams} color={BEAM} />
+            <HangingPallet ref={columns} color={STEEL} />
           </group>
         </group>
       </group>
@@ -210,5 +194,39 @@ const SteelStack = ({ x, z }: { x: number; z: number }) => (
         <meshStandardMaterial color={STEEL} metalness={0.5} />
       </mesh>
     ))}
+  </group>
+);
+
+/** A pallet of steel slung under the hook on four short chains. */
+const HangingPallet = ({
+  ref,
+  color,
+}: {
+  ref: Ref<THREE.Group>;
+  color: string;
+}) => (
+  <group ref={ref} visible={false} position={[0, -2.2, 0]}>
+    <mesh position={[0, 0, 0]} castShadow>
+      <boxGeometry args={[2.2, 0.16, 1.4]} />
+      <meshStandardMaterial color="#a8794f" />
+    </mesh>
+    {[-0.45, 0, 0.45].map((dz) => (
+      <mesh key={dz} position={[0, 0.3, dz]} castShadow>
+        <boxGeometry args={[2.1, 0.42, 0.38]} />
+        <meshStandardMaterial color={color} metalness={0.4} />
+      </mesh>
+    ))}
+    {[-1, 1].map((sx) =>
+      [-1, 1].map((sz) => (
+        <mesh
+          key={`${sx}${sz}`}
+          position={[sx * 0.5, 0.95, sz * 0.3]}
+          rotation={[sz * 0.3, 0, -sx * 0.45]}
+        >
+          <cylinderGeometry args={[0.03, 0.03, 1.4, 4]} />
+          <meshStandardMaterial color="#333" />
+        </mesh>
+      ))
+    )}
   </group>
 );

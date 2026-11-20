@@ -1,6 +1,6 @@
 import { CITY_RADIUS, TILE, isLotTile, isPad, tileAt } from '../../shared/city';
 import { STOREY, type Piece } from '../../shared/structure';
-import { PAD_TOP, pieceBox } from './layout';
+import { PAD_TOP, pieceBoxes } from './layout';
 
 // Simple character physics: the world is a list of axis-aligned boxes. The
 // player is a short upright cylinder. Boxes block sideways movement when they
@@ -85,10 +85,9 @@ export const buildColliders = (
   out.push(fromBox([crane[0], 20, crane[1]], [2.4, 40, 2.4], true));
   out.push(fromBox([crane[0], 0.5, crane[1]], [4, 1, 4]));
   out.push(fromBox([stack[0], 0.6, stack[1]], [2.8, 1.2, 5.6]));
-  for (const p of pieces) {
-    const b = pieceBox(p);
-    out.push(fromBox(b.pos, b.size, p.kind === 'column'));
-  }
+  for (const p of pieces)
+    for (const b of pieceBoxes(p))
+      out.push(fromBox(b.pos, b.size, p.kind === 'column'));
   return out;
 };
 

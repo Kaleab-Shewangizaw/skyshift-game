@@ -10,6 +10,7 @@ import {
   type Challenge,
 } from '../../shared/challenge';
 import {
+  applyDeliver,
   applyPlace,
   applyRemove,
   applySiteWork,
@@ -17,7 +18,7 @@ import {
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
-import type { PieceSpec, PlaceMethod } from '../../shared/structure';
+import type { PalletSpec, PieceSpec } from '../../shared/structure';
 import {
   parseSiteResponse,
   parseStateResponse,
@@ -36,7 +37,8 @@ export type SiteResult =
   { ok: true; view: GameView } | { ok: false; reason: string; view: GameView };
 
 export type BuildOp =
-  | { op: 'place'; piece: PieceSpec; method: PlaceMethod }
+  | { op: 'place'; piece: PieceSpec }
+  | { op: 'deliver'; pallet: PalletSpec }
   | { op: 'remove'; slot: string };
 
 export type GameService = {
@@ -180,8 +182,10 @@ export const createLocalService = (username = 'you') => {
       const at = Date.now();
       return apply(
         op.op === 'place'
-          ? applyPlace(tower, op.piece, username, at, op.method)
-          : applyRemove(tower, op.slot, username, at)
+          ? applyPlace(tower, op.piece, username, at)
+          : op.op === 'deliver'
+            ? applyDeliver(tower, op.pallet, username, at)
+            : applyRemove(tower, op.slot, username, at)
       );
     },
     reset() {

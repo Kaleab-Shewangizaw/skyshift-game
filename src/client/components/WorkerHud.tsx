@@ -18,6 +18,7 @@ const SHORT: Record<PieceKind, string> = {
   beam: 'Beam',
   slab: 'Slab',
   wall: 'Wall',
+  stairs: 'Stairs',
 };
 
 type Props = {
@@ -25,6 +26,8 @@ type Props = {
   setKind: (k: PieceKind) => void;
   material: WallMaterial;
   setMaterial: (m: WallMaterial) => void;
+  /** Steel left on this floor (null on floors 1–2, where it's carried by hand). */
+  steelLeft: number | null;
   /** The spot in front of the worker, and whether it can be built on. */
   aim: {
     spec: PieceSpec;
@@ -65,10 +68,16 @@ export const WorkerHud = (p: Props) => {
               )}
             </>
           )}
+          {p.steelLeft !== null && (
+            <span className={p.steelLeft > 0 ? '' : 'text-[#a1281b]'}>
+              {' · '}
+              {p.kind === 'beam' ? '➖' : '🏛️'} {p.steelLeft} left here
+            </span>
+          )}
         </div>
       </div>
 
-      <div className="card grid grid-cols-5 gap-1.5 p-1.5">
+      <div className="card grid grid-cols-6 gap-1 p-1.5">
         {PIECE_KINDS.map((k) => {
           const on = k === p.kind;
           return (
@@ -84,7 +93,7 @@ export const WorkerHud = (p: Props) => {
           );
         })}
         {p.kind === 'wall' && (
-          <div className="col-span-5 grid grid-cols-4 gap-1.5">
+          <div className="col-span-6 grid grid-cols-4 gap-1.5">
             {WALL_MATERIALS.map((m) => {
               const on = m === p.material;
               return (

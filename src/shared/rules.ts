@@ -3,10 +3,14 @@ import { canDemolish, canPrepare, describeTile, tileKey } from './city.ts';
 import {
   canPlace,
   canRemove,
+  canDeliver,
   describePiece,
+  needsPallet,
+  PALLET_SIZE,
+  type Pallet,
+  type PalletSpec,
   type Piece,
   type PieceSpec,
-  type PlaceMethod,
 } from './structure.ts';
 import {
   DECORATIONS,
@@ -31,7 +35,8 @@ export type SiteWork = 'demolish' | 'prepare';
 
 /** Everything that shows up in the crew feed: daily shifts plus site work. */
 /** Freeform building: placing or taking down a piece. */
-export type BuildOp = 'place' | 'remove';
+/** Freeform building: placing or taking down a piece, or a crane delivery. */
+export type BuildOp = 'place' | 'remove' | 'deliver';
 
 export type ContributionKind = ShiftKind | SiteWork | BuildOp;
 
@@ -64,6 +69,8 @@ export type TowerState = {
   pads: string[];
   /** Freeform pieces on the build grid, in the order they were placed. */
   pieces: Piece[];
+  /** Steel the crane has set down on upper floors, waiting to be built in. */
+  pallets: Pallet[];
 };
 
 export type Action =
@@ -88,6 +95,7 @@ export const emptyTower = (): TowerState => ({
   site: [],
   pads: [],
   pieces: [],
+  pallets: [],
 });
 
 // ---------- Crew (cooperation) ----------
@@ -551,19 +559,60 @@ export const applyPlace = (
   s: TowerState,
   spec: PieceSpec,
   user: string,
-  at: number,
-  method: PlaceMethod = 'hand'
+  at: number
 ): Applied => {
-  const check = canPlace(s.pieces, s.pads, spec, method);
+  const check = canPlace(s.pieces, s.pads, spec, s.pallets);
   if (!check.ok) return { error: check.reason };
   const piece: Piece = { ...spec, by: user, at };
-  const summary = `${method === 'crane' ? 'craned in' : 'placed'} ${describePiece(spec)}`;
+  const summary = `placed ${describePiece(spec)}`;
   return {
     summary,
     state: logged(
       s,
-      { pieces: [...s.pieces, piece] },
+      {
+        pieces: [...s.pieces, piece],
+        pallets: needsPallet(spec) ? useSteel(s.pallets, spec) : s.pallets,
+      },
       { user, kind: 'place', summary, at, teamwork: false }
+    ),
+  };
+};
+
+/** Take one piece of steel off the first pallet on that floor; empty pallets go away. */
+const useSteel = (pallets: readonly Pallet[], spec: PieceSpec): Pallet[] => {
+  const i = pallets.findIndex(
+    (q) => q.kind === spec.kind && q.level === spec.level && q.left > 0
+  );
+  return pallets
+    .map((q, j) => (j === i ? { ...q, left: q.left - 1 } : q))
+    .filter((q) => q.left > 0);
+};
+
+/** The crane sets a pallet of steel down on a floor slab. */
+export const applyDeliver = (
+  s: TowerState,
+  d: PalletSpec,
+  user: string,
+  at: number
+): Applied => {
+  const check = canDeliver(s.pieces, s.pallets, d);
+  if (!check.ok) return { error: check.reason };
+  const n = PALLET_SIZE[d.kind];
+  const same = s.pallets.findIndex(
+    (q) =>
+      q.kind === d.kind && q.x === d.x && q.z === d.z && q.level === d.level
+  );
+  const pallets =
+    same >= 0
+      ? s.pallets.map((q, j) => (j === same ? { ...q, left: q.left + n } : q))
+      : [...s.pallets, { ...d, left: n, by: user, at }];
+  const summary = `craned ${n} ${d.kind}s up to floor ${d.level + 1}`;
+  return {
+    summary,
+    state: logged(
+      s,
+      { pallets },
+      { user, kind: 'deliver', summary, at, teamwork: false }
     ),
   };
 };
@@ -575,7 +624,7 @@ export const applyRemove = (
   user: string,
   at: number
 ): Applied => {
-  const check = canRemove(s.pieces, slot, user);
+  const check = canRemove(s.pieces, slot, user, s.pallets);
   if (!check.ok) return { error: check.reason };
   const summary = `took down ${describePiece(check.piece)}`;
   return {

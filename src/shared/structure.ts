@@ -8,18 +8,25 @@ import { isPad, padTiles } from './city.ts';
 //   node (x, z)  is the grid corner at world (3x, 3z)
 //   edge (x, z, 'x') runs from node (x, z) to node (x+1, z)
 //   edge (x, z, 'z') runs from node (x, z) to node (x, z+1)
-// Pieces live on cells (foundation, slab), nodes (column) or edges (beam, wall).
-// `level` is the storey: 0 is the ground floor. A column or wall on level L
-// fills that storey; a beam or slab on level L sits at its top (the floor of L+1).
+// Pieces live on cells (foundation, slab, stairs), nodes (column) or edges
+// (beam, wall). `level` is the storey: 0 is the ground floor. A column, wall
+// or flight of stairs on level L fills that storey; a beam or slab on level L
+// sits at its top (the floor of L+1).
+//
+// Steel: workers carry beams and columns by hand on the first HAND_LEVELS
+// floors. Higher up, the crane delivers pallets of steel onto a floor slab and
+// each beam or column built on that floor uses one from a pallet there.
 
 export const CELL = 3;
 export const STOREY = 3;
 export const MAX_LEVEL = 11;
 export const MAX_PIECES = 800;
 
-export type PieceKind = 'foundation' | 'column' | 'beam' | 'slab' | 'wall';
+export type PieceKind =
+  'foundation' | 'column' | 'beam' | 'slab' | 'wall' | 'stairs';
 export type WallMaterial = 'brick' | 'stone' | 'glass' | 'timber';
-export type Dir = 'x' | 'z';
+/** Edges run along +x or +z. Stairs climb toward any of the four directions. */
+export type Dir = 'x' | 'z' | '-x' | '-z';
 
 /** What a player asks to place. */
 export type PieceSpec = {
@@ -27,7 +34,7 @@ export type PieceSpec = {
   x: number;
   z: number;
   level: number;
-  /** Edges only (beam, wall). */
+  /** Edges (beam, wall): 'x' or 'z'. Stairs: the direction they climb. */
   dir: Dir | null;
   /** Walls only. */
   material: WallMaterial | null;
@@ -82,6 +89,13 @@ export const PIECES: Record<PieceKind, PieceInfo> = {
     weight: 2,
     capacity: 6,
   },
+  stairs: {
+    name: 'Stairs',
+    icon: '🪜',
+    hint: 'Fills a cell and climbs the way you face. Leave the cell above open.',
+    weight: 2,
+    capacity: 6,
+  },
 };
 
 export type WallInfo = {
@@ -104,6 +118,7 @@ export const PIECE_KINDS: PieceKind[] = [
   'beam',
   'slab',
   'wall',
+  'stairs',
 ];
 export const WALL_MATERIALS: WallMaterial[] = [
   'brick',
@@ -115,11 +130,11 @@ export const WALL_MATERIALS: WallMaterial[] = [
 export const isEdgeKind = (k: PieceKind): boolean =>
   k === 'beam' || k === 'wall';
 export const isCellKind = (k: PieceKind): boolean =>
-  k === 'foundation' || k === 'slab';
+  k === 'foundation' || k === 'slab' || k === 'stairs';
 
 /** One slot per position: two pieces can never share a slot. */
 export const slotKey = (p: PieceSpec): string =>
-  `${p.kind}:${p.x},${p.z},${p.level}${p.dir ?? ''}`;
+  `${p.kind}:${p.x},${p.z},${p.level}${isEdgeKind(p.kind) ? (p.dir ?? '') : ''}`;
 
 export const describePiece = (p: PieceSpec): string => {
   const name =
@@ -155,21 +170,9 @@ export const touchingCells = (p: PieceSpec): [number, number][] => {
       ];
 };
 
-/** Cells under the crane base (it stands at world x≈11, z≈-7.5). */
 /** Cells under the crane base and its steel stack (world x 9..18, z -12..-6). */
 const isCraneCell = (cx: number, cz: number) =>
   cx >= 3 && cx <= 5 && (cz === -4 || cz === -3);
-
-/** How a piece is put in place: carried by hand, or lifted in by the crane. */
-export type PlaceMethod = 'hand' | 'crane';
-
-/** Steel beams, and columns above the ground floor, are too heavy to carry. */
-export const needsCrane = (p: PieceSpec): boolean =>
-  p.kind === 'beam' || (p.kind === 'column' && p.level > 0);
-
-/** The crane only carries steel. */
-export const craneCanCarry = (p: PieceSpec): boolean =>
-  p.kind === 'beam' || p.kind === 'column';
 
 export type CellUse = 'buildable' | 'crane' | 'rough';
 
@@ -206,7 +209,11 @@ export const isWellFormed = (p: PieceSpec): boolean =>
   Number.isInteger(p.level) &&
   p.level >= 0 &&
   p.level <= MAX_LEVEL &&
-  (isEdgeKind(p.kind) ? p.dir !== null : p.dir === null) &&
+  (isEdgeKind(p.kind)
+    ? p.dir === 'x' || p.dir === 'z'
+    : p.kind === 'stairs'
+      ? p.dir !== null
+      : p.dir === null) &&
   (p.kind === 'wall' ? p.material !== null : p.material === null) &&
   (p.kind !== 'foundation' || p.level === 0);
 
@@ -222,9 +229,9 @@ const spec = (
   dir: Dir | null = null
 ): PieceSpec => ({ kind, x, z, level, dir, material: null });
 
-/** Wall slots ignore material, so look walls up by position only. */
+/** Slots ignore wall material and stair direction, so look pieces up by position. */
 const indexOf = (pieces: readonly PieceSpec[]): Index =>
-  new Set(pieces.map((p) => slotKey({ ...p, material: null })));
+  new Set(pieces.map(slotKey));
 
 /** Why `p` would not be held up by the pieces in `idx`, or null if it is. */
 const supportProblem = (idx: Index, p: PieceSpec): string | null => {
@@ -267,7 +274,101 @@ const supportProblem = (idx: Index, p: PieceSpec): string | null => {
         touchingCells(p).some(([x, z]) => has(idx, spec('slab', x, z, L - 1)))
         ? null
         : 'An upper wall needs a beam or floor slab under it.';
+    case 'stairs':
+      return L === 0 || has(idx, spec('slab', p.x, p.z, L - 1))
+        ? null
+        : 'Upper stairs need a floor slab under them.';
   }
+};
+
+// ---------- Steel pallets ----------
+
+export type SteelKind = 'beam' | 'column';
+
+/** Floors 1 and 2 (levels 0 and 1): steel is carried up by hand. */
+export const HAND_LEVELS = 2;
+
+/** How many pieces one crane load brings. */
+export const PALLET_SIZE: Record<SteelKind, number> = { beam: 6, column: 4 };
+const PALLET_MAX = 24;
+export const MAX_PALLETS = 40;
+
+/** Where the crane sets a pallet down: on the slab of cell (x, z) that floors `level`. */
+export type PalletSpec = {
+  kind: SteelKind;
+  x: number;
+  z: number;
+  level: number;
+};
+
+export type Pallet = PalletSpec & { left: number; by: string; at: number };
+
+export const isSteel = (k: PieceKind): k is SteelKind =>
+  k === 'beam' || k === 'column';
+
+/** Beams and columns above floor 2 come off a pallet on their own floor. */
+export const needsPallet = (p: PieceSpec): boolean =>
+  isSteel(p.kind) && p.level >= HAND_LEVELS;
+
+/** Steel of `kind` waiting on floor `level`. */
+export const steelOnFloor = (
+  pallets: readonly Pallet[],
+  kind: SteelKind,
+  level: number
+): number =>
+  pallets
+    .filter((q) => q.kind === kind && q.level === level)
+    .reduce((n, q) => n + q.left, 0);
+
+/** Where a load hanging at world (wx, wy, wz) would land: the highest slab below it. */
+export const deliveryTarget = (
+  pieces: readonly PieceSpec[],
+  kind: SteelKind,
+  wx: number,
+  wy: number,
+  wz: number
+): PalletSpec | null => {
+  const x = Math.floor(wx / CELL);
+  const z = Math.floor(wz / CELL);
+  let best = -1;
+  for (const p of pieces)
+    if (
+      p.kind === 'slab' &&
+      p.x === x &&
+      p.z === z &&
+      (p.level + 1) * STOREY < wy &&
+      p.level > best
+    )
+      best = p.level;
+  return best < 0 ? null : { kind, x, z, level: best + 1 };
+};
+
+export const canDeliver = (
+  pieces: readonly PieceSpec[],
+  pallets: readonly Pallet[],
+  d: PalletSpec
+): PlaceCheck => {
+  if (!isWhole(d.x) || !isWhole(d.z) || !Number.isInteger(d.level))
+    return { ok: false, reason: "The load can't go there." };
+  if (d.level < 1 || d.level > MAX_LEVEL)
+    return { ok: false, reason: 'Set the pallet down on a floor slab.' };
+  if (!has(indexOf(pieces), spec('slab', d.x, d.z, d.level - 1)))
+    return { ok: false, reason: 'Set the pallet down on a floor slab.' };
+  const same = pallets.find(
+    (q) =>
+      q.kind === d.kind && q.x === d.x && q.z === d.z && q.level === d.level
+  );
+  if (same && same.left + PALLET_SIZE[d.kind] > PALLET_MAX)
+    return {
+      ok: false,
+      reason: 'That pallet is already full. Use it up first.',
+    };
+  if (!same && pallets.length >= MAX_PALLETS)
+    return {
+      ok: false,
+      reason: 'Too many pallets on site. Use some up first.',
+    };
+  return { ok: true };
 };
 
 export type PlaceCheck = { ok: true } | { ok: false; reason: string };
@@ -276,20 +377,10 @@ export const canPlace = (
   pieces: readonly PieceSpec[],
   pads: readonly string[],
   p: PieceSpec,
-  method: PlaceMethod = 'hand'
+  pallets: readonly Pallet[] = []
 ): PlaceCheck => {
   if (!isWellFormed(p))
     return { ok: false, reason: "That piece doesn't fit there." };
-  if (method === 'hand' && needsCrane(p))
-    return {
-      ok: false,
-      reason:
-        p.kind === 'beam'
-          ? 'Steel beams are too heavy to carry. Lift them in with the crane.'
-          : 'Upper columns go up by crane. Climb into the crane to lift one in.',
-    };
-  if (method === 'crane' && !craneCanCarry(p))
-    return { ok: false, reason: 'The crane only lifts beams and columns.' };
   if (pieces.length >= MAX_PIECES)
     return { ok: false, reason: 'The site is full of pieces for today.' };
   const uses = touchingCells(p).map(([x, z]) => cellUse(pads, x, z));
@@ -305,10 +396,27 @@ export const canPlace = (
       reason: 'Pour a pad there first (Site work → Make buildable).',
     };
   const idx = indexOf(pieces);
-  if (has(idx, { ...p, material: null }))
+  if (has(idx, p))
     return { ok: false, reason: "There's already a piece there." };
+  if (p.kind === 'stairs' && has(idx, spec('slab', p.x, p.z, p.level)))
+    return {
+      ok: false,
+      reason: 'Stairs need an open stairwell: there is a slab right above.',
+    };
+  if (p.kind === 'slab' && has(idx, spec('stairs', p.x, p.z, p.level)))
+    return { ok: false, reason: "Keep it open: that's the stairwell." };
   const problem = supportProblem(idx, p);
-  return problem ? { ok: false, reason: problem } : { ok: true };
+  if (problem) return { ok: false, reason: problem };
+  if (
+    isSteel(p.kind) &&
+    needsPallet(p) &&
+    steelOnFloor(pallets, p.kind, p.level) < 1
+  )
+    return {
+      ok: false,
+      reason: `No ${p.kind}s on floor ${p.level + 1}. Bring a pallet up with the crane.`,
+    };
+  return { ok: true };
 };
 
 export type RemoveCheck =
@@ -318,7 +426,8 @@ export type RemoveCheck =
 export const canRemove = (
   pieces: readonly Piece[],
   slot: string,
-  user: string
+  user: string,
+  pallets: readonly Pallet[] = []
 ): RemoveCheck => {
   const piece = pieces.find((p) => slotKey(p) === slot);
   if (!piece) return { ok: false, reason: 'That piece is already gone.' };
@@ -326,6 +435,16 @@ export const canRemove = (
     return {
       ok: false,
       reason: `That's u/${piece.by}'s piece. You can only take down your own.`,
+    };
+  if (
+    piece.kind === 'slab' &&
+    pallets.some(
+      (q) => q.x === piece.x && q.z === piece.z && q.level === piece.level + 1
+    )
+  )
+    return {
+      ok: false,
+      reason: 'A pallet of steel sits on it. Use it up first.',
     };
   const rest = pieces.filter((p) => p !== piece);
   const idx = indexOf(rest);
@@ -342,13 +461,27 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // ---------- Snapping a tap to the grid ----------
 
+/** The direction closest to a heading (radians, 0 = +z). */
+export const facingDir = (heading: number): Dir => {
+  const sx = Math.sin(heading);
+  const cz = Math.cos(heading);
+  return Math.abs(sx) > Math.abs(cz)
+    ? sx > 0
+      ? 'x'
+      : '-x'
+    : cz > 0
+      ? 'z'
+      : '-z';
+};
+
 /** The slot of `kind` nearest to world point (wx, wz) on `level`. */
 export const snapToGrid = (
   kind: PieceKind,
   wx: number,
   wz: number,
   level: number,
-  material: WallMaterial | null
+  material: WallMaterial | null,
+  facing: Dir = 'z'
 ): PieceSpec => {
   const u = wx / CELL;
   const v = wz / CELL;
@@ -360,7 +493,7 @@ export const snapToGrid = (
       x: Math.floor(u),
       z: Math.floor(v),
       level: L,
-      dir: null,
+      dir: kind === 'stairs' ? facing : null,
       material: null,
     };
   if (kind === 'column')

@@ -1,7 +1,6 @@
-import { describePiece, type PieceSpec } from '../../shared/structure';
+import { PALLET_SIZE, type PalletSpec } from '../../shared/structure';
 import { setHoist } from '../game/controls';
 import type { CraneLoad } from '../game/crane';
-import type { GhostState } from '../three/Structure';
 import { Joystick } from './Joystick';
 
 type Props = {
@@ -9,8 +8,8 @@ type Props = {
   choice: CraneLoad;
   setChoice: (c: CraneLoad) => void;
   atStack: boolean;
-  /** Where the hanging piece would land, and whether it may. */
-  aim: { spec: PieceSpec; state: GhostState; reason: string | null } | null;
+  /** Where the hanging pallet would land, or why it can't. */
+  drop: { spec: PalletSpec | null; reason: string | null } | null;
   busy: boolean;
   onPickUp: () => void;
   onRelease: () => void;
@@ -19,8 +18,8 @@ type Props = {
 };
 
 const LOADS: { id: CraneLoad; label: string }[] = [
-  { id: 'beam', label: '➖ Beam' },
-  { id: 'column', label: '🏛️ Column' },
+  { id: 'beam', label: `➖ ${PALLET_SIZE.beam} beams` },
+  { id: 'column', label: `🏛️ ${PALLET_SIZE.column} columns` },
 ];
 
 /** Hold to move the hook; let go to stop. */
@@ -46,14 +45,12 @@ export const CraneHud = (p: Props) => {
   let tone = '';
   if (!p.load) {
     status = p.atStack
-      ? 'The hook is over the steel. Pick a piece up!'
-      : 'Swing the hook over the steel stack next to the crane and lower it.';
-  } else if (!p.aim) {
-    status = 'Swing the load over the building.';
-  } else if (p.aim.state === 'ok') {
-    status = `Release to set ${describePiece(p.aim.spec)}.`;
+      ? 'The hook is over the steel. Pick up a pallet!'
+      : 'Swing the hook over the steel stack beside the crane.';
+  } else if (p.drop?.spec && !p.drop.reason) {
+    status = `Drop the ${p.load}s on floor ${p.drop.spec.level + 1}.`;
   } else {
-    status = p.aim.reason ?? "It can't go there.";
+    status = p.drop?.reason ?? 'Swing the pallet over a floor slab.';
     tone = 'text-[#a1281b]';
   }
 
@@ -79,10 +76,10 @@ export const CraneHud = (p: Props) => {
             </button>
             <button
               className="btn3d btn-green shine flex-1 py-2 text-base font-bold uppercase text-outline-sm"
-              disabled={p.busy || p.aim?.state !== 'ok'}
+              disabled={p.busy || !p.drop?.spec || !!p.drop.reason}
               onClick={p.onRelease}
             >
-              {p.busy ? 'Setting…' : '🪝 Release'}
+              {p.busy ? 'Lowering…' : '🪝 Drop'}
             </button>
           </>
         ) : (

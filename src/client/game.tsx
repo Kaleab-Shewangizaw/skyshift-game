@@ -28,9 +28,14 @@ import {
 } from '../shared/city';
 import type { Contribution, ContributionKind, SiteWork } from '../shared/rules';
 import {
+  HAND_LEVELS,
+  canDeliver,
   canPlace,
   canRemove,
+  deliveryTarget,
+  isSteel,
   slotKey,
+  steelOnFloor,
   type PieceKind,
   type PieceSpec,
   type WallMaterial,
@@ -147,17 +152,24 @@ export const App = () => {
 
   const pieces = view?.tower.pieces;
   const pads = view?.tower.pads;
+  const pallets = view?.tower.pallets;
   const aim = useMemo(() => {
-    if (!target || !pieces || !pads) return null;
+    if (!target || !pieces || !pads || !pallets) return null;
     const key = slotKey(target.spec);
     const there = pieces.some((p) => slotKey(p) === key);
     // Aiming at an existing piece offers to take it down; otherwise to place one.
     const c = there
-      ? canRemove(pieces, key, me)
-      : canPlace(pieces, pads, target.spec);
+      ? canRemove(pieces, key, me, pallets)
+      : canPlace(pieces, pads, target.spec, pallets);
     const state: GhostState = !c.ok ? 'bad' : there ? 'remove' : 'ok';
     return { ...target, state, reason: c.ok ? null : c.reason };
-  }, [target, pieces, pads, me]);
+  }, [target, pieces, pads, pallets, me]);
+
+  // Steel left on the worker's floor, once floors need crane deliveries.
+  const steelLeft =
+    target && pallets && isSteel(kind) && target.level >= HAND_LEVELS
+      ? steelOnFloor(pallets, kind, target.level)
+      : null;
 
   const act = async () => {
     if (!aim || aim.state === 'bad') return;
@@ -166,7 +178,7 @@ export const App = () => {
       const r = await service.build(
         aim.state === 'remove'
           ? { op: 'remove', slot: slotKey(aim.spec) }
-          : { op: 'place', piece: aim.spec, method: 'hand' }
+          : { op: 'place', piece: aim.spec }
       );
       setView(r.view);
       if (!r.ok) setNotice(r.reason);
@@ -179,7 +191,7 @@ export const App = () => {
     }
   };
 
-  // ---- In the crane: lift steel from the stack and set it in place ----
+  // ---- In the crane: bring pallets of steel up to the floors ----
   const [inCrane, setInCrane] = useState(false);
   const [nearCrane, setNearCrane] = useState(false);
   const [craneAim, setCraneAim] = useState<CraneAim | null>(null);
@@ -187,13 +199,16 @@ export const App = () => {
   // Mirrors the crane's load so the HUD re-renders when it changes.
   const [hookLoad, setHookLoad] = useState<CraneLoad | null>(null);
 
-  const craneGhost = useMemo(() => {
-    const spec = craneAim?.target;
-    if (!spec || !pieces || !pads) return null;
-    const c = canPlace(pieces, pads, spec, 'crane');
-    const state: GhostState = c.ok ? 'ok' : 'bad';
-    return { spec, state, reason: c.ok ? null : c.reason };
-  }, [craneAim, pieces, pads]);
+  // Where the hanging pallet would land: the highest slab under it.
+  const drop = useMemo(() => {
+    if (!hookLoad || !craneAim || !pieces || !pallets) return null;
+    const { x, y, z } = craneAim.hook;
+    const spec = deliveryTarget(pieces, hookLoad, x, y - 2, z);
+    if (!spec)
+      return { spec: null, reason: 'Swing the pallet over a floor slab.' };
+    const c = canDeliver(pieces, pallets, spec);
+    return { spec, reason: c.ok ? null : c.reason };
+  }, [hookLoad, craneAim, pieces, pallets]);
 
   const pickUp = () => {
     attachLoad(craneChoice);
@@ -204,14 +219,10 @@ export const App = () => {
     setHookLoad(null);
   };
   const release = async () => {
-    if (!craneGhost || craneGhost.state !== 'ok') return;
+    if (!drop?.spec || drop.reason) return;
     setBusy(true);
     try {
-      const r = await service.build({
-        op: 'place',
-        piece: craneGhost.spec,
-        method: 'crane',
-      });
+      const r = await service.build({ op: 'deliver', pallet: drop.spec });
       setView(r.view);
       if (r.ok) putBack();
       else setNotice(r.reason);
@@ -388,9 +399,12 @@ export const App = () => {
               siteMode
                 ? null
                 : inCrane
-                  ? craneGhost && {
-                      level: craneGhost.spec.level,
-                      ghost: { spec: craneGhost.spec, state: craneGhost.state },
+                  ? {
+                      level: drop?.spec?.level ?? 0,
+                      ghost: null,
+                      drop: drop?.spec
+                        ? { spec: drop.spec, ok: !drop.reason }
+                        : null,
                     }
                   : aim && {
                       level: aim.level,
@@ -495,7 +509,7 @@ export const App = () => {
                 choice={craneChoice}
                 setChoice={setCraneChoice}
                 atStack={craneAim?.atStack ?? false}
-                aim={hookLoad ? craneGhost : null}
+                drop={drop}
                 busy={busy}
                 onPickUp={pickUp}
                 onRelease={release}
@@ -508,6 +522,7 @@ export const App = () => {
                 setKind={setKind}
                 material={material}
                 setMaterial={setMaterial}
+                steelLeft={steelLeft}
                 aim={aim}
                 busy={busy}
                 onAct={act}
@@ -530,6 +545,7 @@ const KIND_ICON: Record<ContributionKind, string> = {
   prepare: '🧱',
   place: '🏗️',
   remove: '🗑',
+  deliver: '🏗️',
 };
 
 /** The latest piece of work on the site, as a speech bubble. */

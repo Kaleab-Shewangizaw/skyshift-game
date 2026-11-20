@@ -7,10 +7,12 @@ import {
   WALLS,
   buildableCells,
   slotKey,
+  type Pallet,
+  type PalletSpec,
   type Piece,
   type PieceSpec,
 } from '../../shared/structure';
-import { PAD_TOP, pieceBox, type Box } from './layout';
+import { PAD_TOP, pieceBox, pieceBoxes, type Box } from './layout';
 
 // Freeform building pieces drawn as boxes on the 3 m build grid.
 // Every piece is a scaled unit box, so each look is one instanced draw call.
@@ -41,6 +43,11 @@ const makeMaterial = (key: string): THREE.MeshStandardMaterial => {
       return new THREE.MeshStandardMaterial({
         color: '#d2cdc3',
         roughness: 0.9,
+      });
+    case 'stairs':
+      return new THREE.MeshStandardMaterial({
+        color: '#bdb6aa',
+        roughness: 0.85,
       });
     case 'wall:glass':
       return new THREE.MeshStandardMaterial({
@@ -92,18 +99,19 @@ const PieceGroup = ({
   pieces: Piece[];
 }) => {
   const mesh = useRef<THREE.InstancedMesh>(null);
+  const boxes = useMemo(() => pieces.flatMap(pieceBoxes), [pieces]);
   useLayoutEffect(() => {
     const el = mesh.current;
     if (!el) return;
     const m = new THREE.Matrix4();
-    pieces.forEach((p, i) => el.setMatrixAt(i, boxMatrix(pieceBox(p), m)));
+    boxes.forEach((b, i) => el.setMatrixAt(i, boxMatrix(b, m)));
     el.instanceMatrix.needsUpdate = true;
     el.computeBoundingSphere();
-  }, [pieces]);
+  }, [boxes]);
   return (
     <instancedMesh
       ref={mesh}
-      args={[UNIT_BOX, materialFor(lookKey), pieces.length]}
+      args={[UNIT_BOX, materialFor(lookKey), boxes.length]}
       castShadow={lookKey !== 'wall:glass'}
       receiveShadow
     />
@@ -117,15 +125,18 @@ export type BuildView = {
   /** The storey the worker stands on: the grid is drawn on its floor. */
   level: number;
   ghost: { spec: PieceSpec; state: GhostState } | null;
+  /** Where the crane's load would be set down. */
+  drop?: { spec: PalletSpec; ok: boolean } | null;
 };
 
 type Props = {
   pieces: readonly Piece[];
   pads: readonly string[];
+  pallets: readonly Pallet[];
   build: BuildView | null;
 };
 
-export const Structure = ({ pieces, pads, build }: Props) => {
+export const Structure = ({ pieces, pads, pallets, build }: Props) => {
   const groups = useMemo(() => {
     const byLook = new Map<string, Piece[]>();
     for (const p of pieces) {
@@ -142,11 +153,17 @@ export const Structure = ({ pieces, pads, build }: Props) => {
       {groups.map(([k, list]) => (
         <PieceGroup key={`${k}:${list.length}`} lookKey={k} pieces={list} />
       ))}
+      {pallets.map((q) => (
+        <PalletStack key={`${q.kind}:${q.x},${q.z},${q.level}`} pallet={q} />
+      ))}
       {build && (
         <>
           <LevelGrid pads={pads} level={build.level} />
           {build.ghost && (
             <Ghost spec={build.ghost.spec} state={build.ghost.state} />
+          )}
+          {build.drop && (
+            <DropGhost spec={build.drop.spec} ok={build.drop.ok} />
           )}
         </>
       )}
@@ -218,6 +235,67 @@ const Ghost = ({ spec, state }: { spec: PieceSpec; state: GhostState }) => {
       <meshBasicMaterial
         ref={mat}
         color={GHOST_COLOR[state]}
+        transparent
+        opacity={0.5}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+};
+
+/** World position of the middle of a pallet's deck on its floor slab. */
+const palletBase = (q: PalletSpec): [number, number, number] => [
+  q.x * CELL + CELL / 2,
+  PAD_TOP + q.level * STOREY + 0.25,
+  q.z * CELL + CELL / 2,
+];
+
+/** A timber pallet with the remaining beams or columns stacked on it. */
+const PalletStack = ({ pallet }: { pallet: Pallet }) => {
+  const [x, y, z] = palletBase(pallet);
+  const shown = Math.min(pallet.left, 8);
+  const beam = pallet.kind === 'beam';
+  return (
+    <group position={[x, y, z]}>
+      <mesh position={[0, 0.08, 0]} castShadow receiveShadow>
+        <boxGeometry args={[2.2, 0.16, 1.4]} />
+        <meshStandardMaterial color="#a8794f" roughness={0.9} />
+      </mesh>
+      {Array.from({ length: shown }, (_, i) => {
+        const row = Math.floor(i / 3);
+        const col = (i % 3) - 1;
+        return (
+          <mesh
+            key={i}
+            position={[0, 0.32 + row * (beam ? 0.4 : 0.46), col * 0.45]}
+            castShadow
+          >
+            <boxGeometry args={beam ? [2.1, 0.38, 0.32] : [2.1, 0.44, 0.44]} />
+            <meshStandardMaterial
+              color={beam ? '#e0a33a' : '#5f7d95'}
+              metalness={0.4}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+};
+
+/** Pulsing outline of where the crane would set its pallet down. */
+const DropGhost = ({ spec, ok }: { spec: PalletSpec; ok: boolean }) => {
+  const mat = useRef<THREE.MeshBasicMaterial>(null);
+  useFrame(({ clock }) => {
+    if (mat.current)
+      mat.current.opacity = 0.4 + Math.sin(clock.elapsedTime * 6) * 0.15;
+  });
+  const [x, y, z] = palletBase(spec);
+  return (
+    <mesh position={[x, y + 0.6, z]} renderOrder={2}>
+      <boxGeometry args={[2.6, 1.2, 1.8]} />
+      <meshBasicMaterial
+        ref={mat}
+        color={ok ? '#3dff7a' : '#ff3b30'}
         transparent
         opacity={0.5}
         depthWrite={false}

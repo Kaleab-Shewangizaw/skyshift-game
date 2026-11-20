@@ -14,11 +14,13 @@ Climb into the tower crane to lift steel into place. The bulldozer is next (see
 - **Build**: pick a piece in the hotbar; the ghost in front of the worker shows where it
   goes (green = fits, red = not allowed, with the reason). Press **Place**. Aim at your own
   piece and the button becomes **Take down**.
-- **Climb**: walk into a column to climb it; step off onto a slab at the top.
+- **Stairs**: place 🪜 Stairs in a cell (they climb the way you face) and walk up to the
+  next floor. Leave the cell above open as the stairwell. Climbing columns still works too.
 - **Crane**: walk to the foot of the crane and tap **Enter crane**. The joystick (or WASD)
   turns the jib and runs the hook in and out; hold ▲ ▼ (or R / F) to raise and lower it.
-  Choose Beam or Column, lower the hook onto the steel stack beside the crane, **Pick up**,
-  swing it over the building and **Release** when the ghost turns green.
+  Choose a pallet (6 beams or 4 columns), swing the hook over the steel stack beside the
+  crane, **Pick up**, swing it over the building and **Drop** it: it lands on the highest
+  floor slab under the hook.
 - **Site work** (top left): demolish neighboring tiles to grow the site, and pour
   foundation pads where you want to build.
 
@@ -50,8 +52,9 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
 
 - The site has a 3 m grid (4×4 cells per 12 m tile) and 3 m storeys. Only poured pads
   are buildable; the center tile starts with one.
-- **By hand**: footings, ground-floor columns, slabs and walls. **By crane only**: steel
-  beams, and columns above the ground floor.
+- **Steel**: on floors 1 and 2 the worker carries beams and columns by hand. From floor 3
+  up, each beam or column uses one from a crane-delivered pallet on that floor; the HUD shows
+  how many are left.
 - **Footing** (ground floor only) → **Column** on a corner next to a footing, or on a
   column below → **Beam** with a column at one end → **Slab** with beams on two sides →
   **Wall** on the ground, or on a beam or slab below.
