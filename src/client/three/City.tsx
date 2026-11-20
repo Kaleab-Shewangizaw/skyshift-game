@@ -15,6 +15,7 @@ import {
   type Tile,
 } from '../../shared/city';
 import { makeRng } from '../../shared/rng';
+import { PAD_TOP } from './layout';
 import type { SiteWork } from '../../shared/rules';
 import {
   dirtTexture,
@@ -686,7 +687,7 @@ const Rubble = ({ tiles }: { tiles: [number, number][] }) => {
 };
 
 const PAD_SIZE = TILE - 0.5;
-const PAD_HEIGHT = 0.35;
+const PAD_HEIGHT = PAD_TOP;
 const padGeometry = new THREE.BoxGeometry(PAD_SIZE, PAD_HEIGHT, PAD_SIZE);
 let padMaterial: THREE.MeshStandardMaterial | null = null;
 /** Shared concrete material, created on first use (canvas textures need the DOM). */

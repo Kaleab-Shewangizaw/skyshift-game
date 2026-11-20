@@ -1,4 +1,5 @@
 import type {
+  BuildRequest,
   SiteRequest,
   SiteResponse,
   ShiftRequest,
@@ -20,10 +21,21 @@ import {
   type ContributionKind,
   type CrewRequest,
   type Floor,
+  type BuildOp,
   type ShiftKind,
   type SiteWork,
   type TowerState,
 } from './rules.ts';
+import {
+  PIECE_KINDS,
+  WALL_MATERIALS,
+  isWellFormed,
+  type Dir,
+  type Piece,
+  type PieceKind,
+  type PieceSpec,
+  type WallMaterial,
+} from './structure.ts';
 
 // Runtime guards for anything that crosses a trust boundary: request bodies
 // from the client and JSON read back from Redis. No casts: each guard narrows
@@ -44,11 +56,13 @@ export const isDecorId = (v: unknown): v is DecorId =>
 const isShiftKind = (v: unknown): v is ShiftKind =>
   v === 'build' || v === 'reinforce' || v === 'decorate';
 
+const isBuildOp = (v: unknown): v is BuildOp => v === 'place' || v === 'remove';
+
 const isSiteWork = (v: unknown): v is SiteWork =>
   v === 'demolish' || v === 'prepare';
 
 const isContributionKind = (v: unknown): v is ContributionKind =>
-  isShiftKind(v) || isSiteWork(v);
+  isShiftKind(v) || isSiteWork(v) || isBuildOp(v);
 
 /** Returns a fresh Action object (unknown extra fields dropped), or null. */
 export const parseAction = (v: unknown): Action | null => {
@@ -118,6 +132,52 @@ export const parseContribution = (v: unknown): Contribution | null => {
   return { user: v.user, kind: v.kind, summary: v.summary, at: v.at, teamwork };
 };
 
+const isPieceKind = (v: unknown): v is PieceKind =>
+  typeof v === 'string' && PIECE_KINDS.some((k) => k === v);
+
+const isWallMaterial = (v: unknown): v is WallMaterial =>
+  typeof v === 'string' && WALL_MATERIALS.some((m) => m === v);
+
+const isDir = (v: unknown): v is Dir => v === 'x' || v === 'z';
+
+/** A placement request: kind, position and the fields that kind needs. Extras dropped. */
+export const parsePieceSpec = (v: unknown): PieceSpec | null => {
+  if (
+    !isObject(v) ||
+    !('kind' in v) ||
+    !('x' in v) ||
+    !('z' in v) ||
+    !('level' in v)
+  )
+    return null;
+  if (
+    !isPieceKind(v.kind) ||
+    typeof v.x !== 'number' ||
+    typeof v.z !== 'number' ||
+    typeof v.level !== 'number'
+  )
+    return null;
+  const dir = 'dir' in v && isDir(v.dir) ? v.dir : null;
+  const material =
+    'material' in v && isWallMaterial(v.material) ? v.material : null;
+  const spec: PieceSpec = {
+    kind: v.kind,
+    x: v.x,
+    z: v.z,
+    level: v.level,
+    dir,
+    material,
+  };
+  return isWellFormed(spec) ? spec : null;
+};
+
+const parsePiece = (v: unknown): Piece | null => {
+  const spec = parsePieceSpec(v);
+  if (!spec || !isObject(v) || !('by' in v) || !('at' in v)) return null;
+  if (typeof v.by !== 'string' || !isCount(v.at)) return null;
+  return { ...spec, by: v.by, at: v.at };
+};
+
 const parseCrewRequest = (v: unknown): CrewRequest | null => {
   if (!isObject(v) || !('kind' in v) || !('by' in v)) return null;
   if (!isShiftKind(v.kind) || typeof v.by !== 'string') return null;
@@ -165,6 +225,10 @@ export const parseTower = (v: unknown): TowerState | null => {
   // Site work arrived later too: keep only well-formed, unique tile keys.
   const site = 'site' in v ? parseTileKeys(v.site) : [];
   const pads = 'pads' in v ? parseTileKeys(v.pads) : [];
+  const pieces =
+    'pieces' in v && Array.isArray(v.pieces)
+      ? v.pieces.map(parsePiece).filter((p): p is Piece => p !== null)
+      : [];
   return {
     floors: okFloors,
     recent: okRecent,
@@ -174,6 +238,7 @@ export const parseTower = (v: unknown): TowerState | null => {
     spirit,
     site,
     pads,
+    pieces,
   };
 };
 
@@ -253,5 +318,23 @@ export const parseSiteResponse = (v: unknown): SiteResponse | null => {
   if (v.ok === true) return { ok: true, state };
   if (v.ok === false && 'reason' in v && typeof v.reason === 'string')
     return { ok: false, reason: v.reason, state };
+  return null;
+};
+
+export const parseBuildRequest = (v: unknown): BuildRequest | null => {
+  if (!isObject(v) || !('dateKey' in v) || !('op' in v)) return null;
+  if (typeof v.dateKey !== 'string' || !isValidDateKey(v.dateKey)) return null;
+  if (v.op === 'place' && 'piece' in v) {
+    const piece = parsePieceSpec(v.piece);
+    return piece ? { dateKey: v.dateKey, op: 'place', piece } : null;
+  }
+  if (
+    v.op === 'remove' &&
+    'slot' in v &&
+    typeof v.slot === 'string' &&
+    v.slot.length <= 64
+  ) {
+    return { dateKey: v.dateKey, op: 'remove', slot: v.slot };
+  }
   return null;
 };

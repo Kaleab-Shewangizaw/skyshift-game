@@ -21,6 +21,25 @@ This document replaces the "pick 1 of 3 daily options" design with a hands-on
 - **Market and stockpile.** Order materials from the market; they are delivered and
   stacked on site, then used from the stack.
 
+### Update 2026-11-20: play as a worker
+
+- **A character you control, third person** (like a small GTA): walk the site, build by
+  hand, climb what you build. The camera follows behind the worker.
+- **Three ways to work:**
+  1. **On foot (engineer / bricklayer):** footings, walls (brick, stone, glass, timber),
+     floor slabs, bolting beams, glazing. Anything done by hand.
+  2. **Crane operator:** walk to the crane, climb in, slew the jib, move the trolley,
+     lower the hook, pick up beams and heavy pieces and set them in place up high.
+  3. **Bulldozer driver:** drive the dozer around the city and push buildings and roads
+     down to grow the site (replaces the demolish menu).
+- **Ambition:** players should be able to build famous-landmark-style structures (an
+  Eiffel-like lattice tower, a Burj-like supertall...), not only boxes. That needs, later:
+  many more storeys, diagonal braces / lattice members, setbacks and tapering, and a
+  spire / antenna piece. The grid model (cells, corners, edges per storey) is chosen so
+  these can be added as new piece kinds.
+- **The old floor-stacking shift game is retired** (decided 2026-11-20). Daily scoring
+  comes back as the end-of-day load test.
+
 ## Constraints that shape the plan
 
 - **Platform:** Devvit Web posts run in an iframe on reddit.com, mostly on phones.
@@ -48,24 +67,25 @@ Each stage ends playable in `npm run play` and on Reddit.
    foundation pad on (unlimited, not a shift). Only pads will be buildable in Stage 2; the
    tower's center tile starts with one. `TowerState.pads`. Both kinds of site work go through
    `POST /api/site` with `work: 'demolish' | 'prepare'`.
-2. **Freeform grid building.** A build grid over the lot (for example 8×8 cells × N
-   levels). Piece types: foundation (dig), column, beam, floor slab, wall
-   (brick / stone / glass / timber). Players shape the footprint (H, L, ring...).
-   Server-authoritative placement, stored per post + day.
-3. **Structural rules.** Each piece has a weight and a capacity. Load flows down through
-   supports to the foundation. Unsupported pieces fall; overloaded pieces crack, and glass
-   shatters. Previews show the risk before placing. Fall and shatter animations.
-4. **Market and stockpile.** Order materials with a daily budget; deliveries stack on
-   site; placing a piece uses stock. Teamwork: one player's order feeds everyone.
-5. **Workers and crane.** Tap-to-move worker avatars. Materials must be lifted by the
-   crane to upper levels; jobs (crane operator, beam prep, bricklayer). A solo player
-   switches jobs. Other players' workers appear live via realtime presence.
-6. **Day test and result card.** The end-of-day load test runs the structural rules
-   (with a shake animation), then a shareable result card.
-7. **Submission polish.** Splash with a live 3D preview, onboarding, mobile QA, write-up.
+2. ✅ **Freeform grid building** (rules done 2026-11-20, `src/shared/structure.ts`):
+   3 m grid on the pads, 3 m storeys; footing, column, beam, slab, wall (4 materials);
+   support rules; remove your own pieces. `POST /api/build`.
+   ✅ **Worker on foot** (done 2026-11-20, `src/client/three/Player.tsx`, `physics.ts`):
+   third-person worker, joystick / WASD, jump, collisions, climb columns, build the piece
+   in front of you with a live ghost.
+3. **Crane operator.** Enter the crane at its mast; slew / trolley / hoist controls; pick
+   pieces from the stockpile and drop them into a slot. Heavy steel (columns and beams above
+   the ground floor) only arrives by crane.
+4. **Bulldozer.** Drivable dozer; pushing into a building or road tile demolishes it.
+5. **Structural rules.** Weight and capacity per piece; load flows down through supports.
+   Unsupported pieces fall, overloaded ones crack, glass shatters. Fall/shatter animations.
+6. **Landmark pieces.** Diagonal braces, taller storey limit, setbacks, spire. Enough to
+   build an Eiffel-like lattice or a Burj-like supertall.
+7. **Market and stockpile, live presence** (other workers appear via realtime).
+8. **Day test and result card**, then **submission polish** (splash, onboarding, mobile QA).
 
-**Cut order if time runs short:** live presence → worker walking (keep job switching) →
-crane step (direct placement) → market budget (free stock).
+**Cut order if time runs short:** live presence → market budget (free stock) →
+landmark pieces beyond braces → bulldozer (keep the menu).
 
 ## Decisions (2026-11-19)
 

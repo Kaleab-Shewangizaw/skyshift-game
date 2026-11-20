@@ -1,6 +1,13 @@
 import type { Challenge } from './challenge.ts';
 import { canDemolish, canPrepare, describeTile, tileKey } from './city.ts';
 import {
+  canPlace,
+  canRemove,
+  describePiece,
+  type Piece,
+  type PieceSpec,
+} from './structure.ts';
+import {
   DECORATIONS,
   MATERIALS,
   type DecorId,
@@ -22,7 +29,10 @@ export type ShiftKind = 'build' | 'reinforce' | 'decorate';
 export type SiteWork = 'demolish' | 'prepare';
 
 /** Everything that shows up in the crew feed: daily shifts plus site work. */
-export type ContributionKind = ShiftKind | SiteWork;
+/** Freeform building: placing or taking down a piece. */
+export type BuildOp = 'place' | 'remove';
+
+export type ContributionKind = ShiftKind | SiteWork | BuildOp;
 
 export type Contribution = {
   user: string;
@@ -51,6 +61,8 @@ export type TowerState = {
   site: string[];
   /** Site tiles leveled into buildable foundation pads ("x,z" keys, in order). */
   pads: string[];
+  /** Freeform pieces on the build grid, in the order they were placed. */
+  pieces: Piece[];
 };
 
 export type Action =
@@ -74,6 +86,7 @@ export const emptyTower = (): TowerState => ({
   spirit: 0,
   site: [],
   pads: [],
+  pieces: [],
 });
 
 // ---------- Crew (cooperation) ----------
@@ -517,6 +530,61 @@ export const applySiteWork = (
   work === 'demolish'
     ? applyDemolish(s, x, z, user, at)
     : applyPrepare(s, x, z, user, at);
+
+// ---------- Freeform building ----------
+
+type Applied = { state: TowerState; summary: string } | { error: string };
+
+const logged = (
+  s: TowerState,
+  next: Partial<TowerState>,
+  entry: Contribution
+): TowerState => ({
+  ...s,
+  ...next,
+  recent: [entry, ...s.recent].slice(0, RECENT_LIMIT),
+});
+
+/** Place one piece on the build grid. Unlimited, like site work. */
+export const applyPlace = (
+  s: TowerState,
+  spec: PieceSpec,
+  user: string,
+  at: number
+): Applied => {
+  const check = canPlace(s.pieces, s.pads, spec);
+  if (!check.ok) return { error: check.reason };
+  const piece: Piece = { ...spec, by: user, at };
+  const summary = `placed ${describePiece(spec)}`;
+  return {
+    summary,
+    state: logged(
+      s,
+      { pieces: [...s.pieces, piece] },
+      { user, kind: 'place', summary, at, teamwork: false }
+    ),
+  };
+};
+
+/** Take down one of your own pieces, if nothing rests on it. */
+export const applyRemove = (
+  s: TowerState,
+  slot: string,
+  user: string,
+  at: number
+): Applied => {
+  const check = canRemove(s.pieces, slot, user);
+  if (!check.ok) return { error: check.reason };
+  const summary = `took down ${describePiece(check.piece)}`;
+  return {
+    summary,
+    state: logged(
+      s,
+      { pieces: s.pieces.filter((p) => p !== check.piece) },
+      { user, kind: 'remove', summary, at, teamwork: false }
+    ),
+  };
+};
 
 // ---------- End of round ----------
 

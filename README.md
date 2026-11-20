@@ -1,9 +1,21 @@
 # Skyshift
 
-A cozy, asynchronous community building game for Reddit interactive posts (Devvit Web).
-Everyone in a post builds one small skyscraper together each day. Each player takes
-one **shift**: Build a floor, Reinforce a weak floor, or Decorate. At the end of the
-UTC day the tower is tested and the community gets a result card.
+A small open-world construction game for Reddit interactive posts (Devvit Web).
+Everyone in a post works on one shared building site each UTC day. You play a
+construction worker in third person: walk the site, dig footings, put up columns,
+beams, floor slabs and walls (brick, stone, glass, timber), and climb what you build.
+The crane and the bulldozer are coming next (see `docs/VISION-3D.md`).
+
+## Controls
+
+- **Walk**: on-screen joystick, or WASD / arrow keys. **Jump**: ⤒ button or Space.
+- **Look around**: drag the screen; pinch or scroll to zoom.
+- **Build**: pick a piece in the hotbar; the ghost in front of the worker shows where it
+  goes (green = fits, red = not allowed, with the reason). Press **Place**. Aim at your own
+  piece and the button becomes **Take down**.
+- **Climb**: walk into a column to climb it; step off onto a slab at the top.
+- **Site work** (top left): demolish neighboring tiles to grow the site, and pour
+  foundation pads where you want to build.
 
 ## Stack
 
@@ -29,22 +41,16 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
 | `npm run lint` | ESLint |
 | `npm run deploy` | type-check, lint, `devvit upload` |
 
-## Rules (v1)
+## Building rules
 
-- **Height**: sum of floor heights (material dependent, 2–4 m).
-- **Stability**: every floor has a *sturdiness* (material + condition modifier + braces)
-  and a *need* = `1 + floor(floorsAbove / 3)` (+ wind on the upper half on windy days).
-  Stability = Σ min(sturdiness, need) / Σ need. Weak floors show a crack and a ⚠ marker.
-- **Reinforce** braces the floor with the smallest margin (max 3 braces per floor).
-- **Style**: material style + decorations (+3 if the decoration matches the day's theme)
-  + 2 per extra distinct material.
-- **Result**: one star each for meeting the height, stability, and style targets.
-- **Crew (cooperation)**: when you confirm a shift you leave a request for the next
-  builder (build / brace / decorate). Answering the open request is a *teamwork* shift
-  and extends the crew chain; ignoring it just resets the chain. Every shift adds Crew
-  Spirit (+1, +1 for teamwork, +1 more while the chain is 3+). Spirit milestones unlock
-  tower-wide perks for the day: 🧺 picnic at 5 (+4 style), 🛟 scaffolding at 12 (+1
-  sturdiness on every floor), 🗼 golden spire at 22 (+6 m, +4 style).
+- The site has a 3 m grid (4×4 cells per 12 m tile) and 3 m storeys. Only poured pads
+  are buildable; the center tile starts with one.
+- **Footing** (ground floor only) → **Column** on a corner next to a footing, or on a
+  column below → **Beam** with a column at one end → **Slab** with beams on two sides →
+  **Wall** on the ground, or on a beam or slab below.
+- You can take down your own pieces when nothing rests on them. Building is unlimited.
+- Rules are pure functions in `src/shared/structure.ts`, shared by client and server.
+  Weights and capacities are defined there already for the structural rules (stage 3).
 
 ## Decisions
 
@@ -55,23 +61,18 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
   condition, materials, and targets. **Tower state is keyed by post + date.**
 - **Variety**: themes (8) and conditions (6) are drawn from a seeded shuffle per cycle,
   so each appears once per cycle and nothing repeats on consecutive days.
-- **One shift per user per day.**
-- Rules are pure functions in `src/shared/rules.ts`. The client uses them to preview and
-  explain an action before confirming; the server will use the same functions as the
-  authority.
+- **No play limit.** Site work and building are unlimited.
 
-## Server state (stage 2)
+## Server state
 
-- `GET /api/state`: today's tower for this post plus the viewer's own shift.
-- `POST /api/shift` `{ dateKey, action }`: the server takes the day from its own clock,
-  the user from `context.userId`, and the post from `context.postId`. The action shape is
-  validated (`src/shared/validate.ts`) and applied with the shared rules engine.
-- `POST /api/site` `{ dateKey, work, x, z }`: unlimited site work, not a shift. `demolish`
-  clears a city tile touching the site (the site grows, up to 30 tiles); `prepare` levels a
-  site tile into a buildable foundation pad. Only the tower key is watched.
-- Redis: `tower:{postId}:{dateKey}` (JSON) and `shifts:{postId}:{dateKey}` (hash userId → shift),
-  both expiring after 14 days. Writes use WATCH → read → `applyAction` → MULTI/EXEC with
-  retries; the shift record is written in the same transaction, so one shift per user per day
-  holds even under parallel requests.
-- **Offline UI dev**: `VITE_LOCAL_DEMO=1 npm run build` swaps in the localStorage service and
-  the "Local demo" bar (neighbor shift / reset). Normal builds never include it.
+- `GET /api/state`: today's site for this post (`TowerState`: site, pads, pieces, feed).
+- `POST /api/site` `{ dateKey, work, x, z }`: `demolish` clears a city tile touching the
+  site (the site grows, up to 30 tiles); `prepare` levels a site tile into a buildable pad.
+- `POST /api/build` `{ dateKey, op: 'place', piece }` or `{ dateKey, op: 'remove', slot }`.
+- The server takes the day from its own clock, the user from `context.userId` and the post
+  from `context.postId`. Bodies are validated in `src/shared/validate.ts` and applied with
+  the shared rules.
+- Redis: `tower:{postId}:{dateKey}` (JSON), expiring after 14 days. Writes use
+  WATCH → read → apply → MULTI/EXEC with retries.
+- **Offline UI dev**: `npm run play` (or `VITE_LOCAL_DEMO=1`) swaps in the localStorage
+  service and a "reset day" button. Normal builds never include it.

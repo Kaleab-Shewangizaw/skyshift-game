@@ -1,6 +1,6 @@
 import type {
   ApiError,
-  ShiftRequest,
+  BuildRequest,
   SiteRequest,
   StateResponse,
 } from '../../shared/api';
@@ -10,19 +10,15 @@ import {
   type Challenge,
 } from '../../shared/challenge';
 import {
-  applyAction,
+  applyPlace,
+  applyRemove,
   applySiteWork,
-  communityNeed,
   emptyTower,
-  type Action,
-  type Contribution,
-  type ShiftKind,
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
+import type { PieceSpec } from '../../shared/structure';
 import {
-  parseContribution,
-  parseShiftResponse,
   parseSiteResponse,
   parseStateResponse,
   parseTower,
@@ -32,40 +28,36 @@ export type GameView = {
   dateKey: string;
   challenge: Challenge;
   tower: TowerState;
-  /** This player's shift today, if they already took one. */
-  myShift: Contribution | null;
   /** null when logged out. */
   username: string | null;
 };
 
-export type ShiftResult =
-  | { ok: true; view: GameView; floorIndex: number }
-  | { ok: false; reason: string; view?: GameView };
-
 export type SiteResult =
   { ok: true; view: GameView } | { ok: false; reason: string; view: GameView };
 
+export type BuildOp =
+  { op: 'place'; piece: PieceSpec } | { op: 'remove'; slot: string };
+
 export type GameService = {
+  load(): Promise<GameView>;
   /**
    * Demolish city tile (x, z) next to the site, or pour a buildable pad on
-   * site tile (x, z). Unlimited; not a shift.
+   * site tile (x, z). Unlimited.
    */
   siteWork(work: SiteWork, x: number, z: number): Promise<SiteResult>;
-  load(): Promise<GameView>;
-  /** `ask` is the request this player leaves for the next builder. */
-  takeShift(action: Action, ask: ShiftKind | null): Promise<ShiftResult>;
+  /** Place a piece, or take down one of your own by its slot. Unlimited. */
+  build(op: BuildOp): Promise<SiteResult>;
 };
 
 // ---------------------------------------------------------------------------
 // Server-backed service: the real game. The server owns the day, the user and
-// the tower; the client only sends which action it wants.
+// the site; the client only sends what it wants to do.
 // ---------------------------------------------------------------------------
 
 const toView = (s: StateResponse): GameView => ({
   dateKey: s.dateKey,
   challenge: makeChallenge(s.dateKey),
   tower: s.tower,
-  myShift: s.myShift,
   username: s.username,
 });
 
@@ -104,9 +96,22 @@ const request = async <T>(
   return parsed;
 };
 
+const post = (path: string, body: unknown) =>
+  request(path, parseSiteResponse, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
 export const createServerService = (): GameService => {
   // The day the player is looking at, so the server can tell them if it rolled over.
   let dateKey = utcDateKey();
+  const result = (r: Awaited<ReturnType<typeof post>>): SiteResult => {
+    dateKey = r.state.dateKey;
+    return r.ok
+      ? { ok: true, view: toView(r.state) }
+      : { ok: false, reason: r.reason, view: toView(r.state) };
+  };
   return {
     async load() {
       const s = await request('/api/state', parseStateResponse);
@@ -115,27 +120,11 @@ export const createServerService = (): GameService => {
     },
     async siteWork(work, x, z) {
       const body: SiteRequest = { dateKey, work, x, z };
-      const r = await request('/api/site', parseSiteResponse, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      dateKey = r.state.dateKey;
-      return r.ok
-        ? { ok: true, view: toView(r.state) }
-        : { ok: false, reason: r.reason, view: toView(r.state) };
+      return result(await post('/api/site', body));
     },
-    async takeShift(action, ask) {
-      const body: ShiftRequest = { dateKey, action, ask };
-      const r = await request('/api/shift', parseShiftResponse, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      dateKey = r.state.dateKey;
-      return r.ok
-        ? { ok: true, view: toView(r.state), floorIndex: r.floorIndex }
-        : { ok: false, reason: r.reason, view: toView(r.state) };
+    async build(op) {
+      const body: BuildRequest = { dateKey, ...op };
+      return result(await post('/api/build', body));
     },
   };
 };
@@ -145,42 +134,21 @@ export const createServerService = (): GameService => {
 // Enabled only when built with VITE_LOCAL_DEMO=1 (see README).
 // ---------------------------------------------------------------------------
 
-type LocalSave = { tower: TowerState; myShift: Contribution | null };
-
-const NEIGHBORS = [
-  'maple_mason',
-  'quietcrane',
-  'brickbybrick',
-  'sunnyrivet',
-  'loftlark',
-];
-
-/** Saves from older versions are upgraded by the same parsers the server uses. */
-const read = (key: string): LocalSave | null => {
+/** Saves from older versions are upgraded by the same parser the server uses. */
+const read = (key: string): TowerState | null => {
   try {
     const raw = localStorage.getItem(key);
     const v: unknown = raw ? JSON.parse(raw) : null;
-    if (
-      typeof v !== 'object' ||
-      v === null ||
-      !('tower' in v) ||
-      !('myShift' in v)
-    )
-      return null;
-    const tower = parseTower(v.tower);
-    if (!tower) return null;
-    return {
-      tower,
-      myShift: v.myShift === null ? null : parseContribution(v.myShift),
-    };
+    if (typeof v !== 'object' || v === null || !('tower' in v)) return null;
+    return parseTower(v.tower);
   } catch {
     return null;
   }
 };
 
-const write = (key: string, save: LocalSave) => {
+const write = (key: string, tower: TowerState) => {
   try {
-    localStorage.setItem(key, JSON.stringify(save));
+    localStorage.setItem(key, JSON.stringify({ tower }));
   } catch {
     // Storage blocked (private mode etc.): the round just won't persist.
   }
@@ -190,96 +158,34 @@ export const createLocalService = (username = 'you') => {
   const dateKey = utcDateKey();
   const challenge = makeChallenge(dateKey);
   const key = `skyshift:local:${dateKey}`;
-  let save: LocalSave = read(key) ?? { tower: emptyTower(), myShift: null };
+  let tower: TowerState = read(key) ?? emptyTower();
 
-  const view = (): GameView => ({
-    dateKey,
-    challenge,
-    tower: save.tower,
-    myShift: save.myShift,
-    username,
-  });
+  const view = (): GameView => ({ dateKey, challenge, tower, username });
+  const apply = (r: { state: TowerState } | { error: string }): SiteResult => {
+    if ('error' in r) return { ok: false, reason: r.error, view: view() };
+    tower = r.state;
+    write(key, tower);
+    return { ok: true, view: view() };
+  };
 
-  const service: GameService & {
-    simulateNeighbor(): GameView;
-    reset(): GameView;
-  } = {
+  const service: GameService & { reset(): GameView } = {
     async load() {
       return view();
     },
     async siteWork(work, x, z) {
-      const r = applySiteWork(save.tower, work, x, z, username, Date.now());
-      if ('error' in r) return { ok: false, reason: r.error, view: view() };
-      save = { ...save, tower: r.state };
-      write(key, save);
-      return { ok: true, view: view() };
+      return apply(applySiteWork(tower, work, x, z, username, Date.now()));
     },
-    async takeShift(action, ask) {
-      if (save.myShift)
-        return {
-          ok: false,
-          reason: 'You already took your shift today.',
-          view: view(),
-        };
-      const r = applyAction(
-        save.tower,
-        action,
-        challenge,
-        username,
-        Date.now(),
-        ask
+    async build(op) {
+      const at = Date.now();
+      return apply(
+        op.op === 'place'
+          ? applyPlace(tower, op.piece, username, at)
+          : applyRemove(tower, op.slot, username, at)
       );
-      if ('error' in r) return { ok: false, reason: r.error, view: view() };
-      save = { tower: r.state, myShift: r.state.recent[0]! };
-      write(key, save);
-      return { ok: true, view: view(), floorIndex: r.preview.floorIndex };
-    },
-    /**
-     * Dev helper: pretend another player took a shift. Neighbors usually
-     * answer the open request (so you can see chains build) and then ask for
-     * whatever the tower needs most.
-     */
-    simulateNeighbor() {
-      const t = save.tower;
-      const n = t.shiftCount;
-      const user = NEIGHBORS[n % NEIGHBORS.length]!;
-      const byKind: Record<ShiftKind, Action> = {
-        build: {
-          kind: 'build',
-          material: challenge.materials[n % challenge.materials.length]!,
-        },
-        reinforce: { kind: 'reinforce' },
-        decorate: {
-          kind: 'decorate',
-          decor: challenge.decorations[n % challenge.decorations.length]!,
-        },
-      };
-      const wanted =
-        t.request && n % 4 !== 3 ? t.request.kind : communityNeed(t, challenge);
-      const order: ShiftKind[] = [wanted, 'build', 'reinforce', 'decorate'];
-      for (const kind of order) {
-        const r = applyAction(t, byKind[kind], challenge, user, Date.now());
-        if ('error' in r) continue;
-        const ask = communityNeed(r.state, challenge);
-        const withAsk = applyAction(
-          t,
-          byKind[kind],
-          challenge,
-          user,
-          Date.now(),
-          ask
-        );
-        if (!('error' in withAsk)) {
-          save = { ...save, tower: withAsk.state };
-          write(key, save);
-        }
-        break;
-      }
-      return view();
     },
     reset() {
-      save = { tower: emptyTower(), myShift: null };
-      write(key, save);
+      tower = emptyTower();
+      write(key, tower);
       return view();
     },
   };

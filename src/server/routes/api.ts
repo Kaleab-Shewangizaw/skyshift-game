@@ -1,19 +1,14 @@
 import { Hono } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import type {
-  ApiError,
-  SiteResponse,
-  ShiftResponse,
-  StateResponse,
-} from '../../shared/api';
+import type { ApiError, SiteResponse, StateResponse } from '../../shared/api';
 import { utcDateKey } from '../../shared/challenge';
-import { parseSiteRequest, parseShiftRequest } from '../../shared/validate';
+import { parseBuildRequest, parseSiteRequest } from '../../shared/validate';
 import {
   CorruptTowerError,
   TowerBusyError,
+  doBuild,
   doSiteWork,
   loadState,
-  takeShift,
 } from '../core/tower';
 
 export const api = new Hono();
@@ -56,53 +51,6 @@ api.get('/state', async (c) => {
   );
 });
 
-api.post('/shift', async (c) => {
-  const { postId, userId } = context;
-  if (!postId)
-    return c.json(fail('This only works inside a Skyshift post.'), 400);
-
-  const body: unknown = await c.req.json().catch(() => null);
-  const req = parseShiftRequest(body);
-  if (!req)
-    return c.json(fail("That shift didn't make sense to the foreman."), 400);
-
-  // The server's clock decides the day. Never trust the client's.
-  const dateKey = utcDateKey();
-  const username = userId
-    ? ((await reddit.getCurrentUsername()) ?? null)
-    : null;
-
-  if (!userId || !username) {
-    const state = await loadState(postId, dateKey, undefined, null);
-    return c.json<ShiftResponse>({
-      ok: false,
-      reason: 'Log in to Reddit to take a shift.',
-      state,
-    });
-  }
-
-  if (req.dateKey !== dateKey) {
-    const state = await loadState(postId, dateKey, userId, username);
-    return c.json<ShiftResponse>({
-      ok: false,
-      reason: "A new day started on the site! Here's today's fresh plot.",
-      state,
-    });
-  }
-
-  return c.json<ShiftResponse>(
-    await takeShift({
-      postId,
-      dateKey,
-      userId,
-      username,
-      action: req.action,
-      ask: req.ask,
-      now: Date.now(),
-    })
-  );
-});
-
 api.post('/site', async (c) => {
   const { postId, userId } = context;
   if (!postId)
@@ -141,6 +89,48 @@ api.post('/site', async (c) => {
       work: req.work,
       x: req.x,
       z: req.z,
+      now: Date.now(),
+    })
+  );
+});
+
+api.post('/build', async (c) => {
+  const { postId, userId } = context;
+  if (!postId)
+    return c.json(fail('This only works inside a Skyshift post.'), 400);
+
+  const body: unknown = await c.req.json().catch(() => null);
+  const req = parseBuildRequest(body);
+  if (!req)
+    return c.json(fail("The foreman couldn't read that blueprint."), 400);
+
+  const dateKey = utcDateKey();
+  const username = userId
+    ? ((await reddit.getCurrentUsername()) ?? null)
+    : null;
+  if (!userId || !username) {
+    const state = await loadState(postId, dateKey, undefined, null);
+    return c.json<SiteResponse>({
+      ok: false,
+      reason: 'Log in to Reddit to work on the site.',
+      state,
+    });
+  }
+  if (req.dateKey !== dateKey) {
+    const state = await loadState(postId, dateKey, userId, username);
+    return c.json<SiteResponse>({
+      ok: false,
+      reason: "A new day started on the site! Here's today's fresh plot.",
+      state,
+    });
+  }
+  return c.json<SiteResponse>(
+    await doBuild({
+      postId,
+      dateKey,
+      userId,
+      username,
+      request: req,
       now: Date.now(),
     })
   );

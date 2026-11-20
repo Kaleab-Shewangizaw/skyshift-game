@@ -1,3 +1,4 @@
+import type { PieceSpec } from './structure.ts';
 import type {
   Action,
   Contribution,
@@ -49,6 +50,14 @@ export type SiteRequest = {
 export type SiteResponse =
   | { ok: true; state: StateResponse }
   | { ok: false; reason: string; state: StateResponse };
+
+/** POST /api/build body: place a piece, or take down your own piece by its slot. */
+export type BuildRequest =
+  | { dateKey: string; op: 'place'; piece: PieceSpec }
+  | { dateKey: string; op: 'remove'; slot: string };
+
+/** Same shape as site work: unlimited, with fresh state either way. */
+export type BuildResponse = SiteResponse;
 
 /** Non-2xx responses: malformed request, missing context, server busy. */
 export type ApiError = {
