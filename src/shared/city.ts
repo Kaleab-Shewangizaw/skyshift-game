@@ -11,8 +11,12 @@ import { hashString, makeRng } from './rng.ts';
 export const TILE = 12;
 /** Tiles from -CITY_RADIUS to CITY_RADIUS on both axes. */
 export const CITY_RADIUS = 9;
-/** Upper bound on the site, including the starting 3×3 block. */
-export const MAX_SITE_TILES = 30;
+/**
+ * Today's site can grow over the middle block and the roads around it (5 × 5
+ * tiles). The blocks beyond are players' plots.
+ */
+export const SITE_REACH = 2;
+export const MAX_SITE_TILES = (2 * SITE_REACH + 1) ** 2;
 
 export type TileKind = 'lot' | 'road' | 'building' | 'park';
 
@@ -136,6 +140,11 @@ export const canDemolish = (
 ): DemolishCheck => {
   if (!inCity(x, z))
     return { ok: false, reason: "That's outside the city limits." };
+  if (Math.max(Math.abs(x), Math.abs(z)) > SITE_REACH)
+    return {
+      ok: false,
+      reason: 'That land belongs to the city blocks for players’ plots.',
+    };
   const tile = tileAt(site, x, z);
   if (tile.kind === 'lot')
     return { ok: false, reason: "That's already part of the site." };

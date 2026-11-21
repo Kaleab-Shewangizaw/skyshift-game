@@ -656,7 +656,8 @@ export const canPlace = (
   pieces: readonly PieceSpec[],
   pads: readonly string[],
   p: PieceSpec,
-  pallets: readonly Pallet[] = []
+  /** Crane-delivered steel; pass null where steel is carried by hand at any height (plots). */
+  pallets: readonly Pallet[] | null = []
 ): PlaceCheck => {
   if (!isWellFormed(p))
     return { ok: false, reason: "That piece doesn't fit there." };
@@ -687,7 +688,12 @@ export const canPlace = (
   const problem = supportProblem(idx, p);
   if (problem) return { ok: false, reason: problem };
   const steel = steelOf(p.kind);
-  if (steel && needsPallet(p) && steelOnFloor(pallets, steel, p.level) < 1)
+  if (
+    steel &&
+    pallets &&
+    needsPallet(p) &&
+    steelOnFloor(pallets, steel, p.level) < 1
+  )
     return {
       ok: false,
       reason: `No ${steel}s on floor ${p.level + 1}. Bring a pallet up with the crane.`,

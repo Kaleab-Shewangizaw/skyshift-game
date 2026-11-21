@@ -92,3 +92,17 @@ export const takeJump = (): boolean => {
 export const setHoist = (v: number) => {
   controls.hoist = v;
 };
+
+/** A pending jump to another part of the city (world x, z), used by the travel buttons. */
+let teleport: { x: number; z: number } | null = null;
+
+export const requestTeleport = (x: number, z: number) => {
+  teleport = { x, z };
+};
+
+/** The pending teleport, once; clears it. */
+export const takeTeleport = (): { x: number; z: number } | null => {
+  const t = teleport;
+  teleport = null;
+  return t;
+};

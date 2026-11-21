@@ -1,6 +1,7 @@
 import type {
   ApiError,
   BuildRequest,
+  PlotRequest,
   SiteRequest,
   StateResponse,
 } from '../../shared/api';
@@ -9,7 +10,16 @@ import {
   utcDateKey,
   type Challenge,
 } from '../../shared/challenge';
-import { dayStart } from '../../shared/blueprints';
+import { dailyBlueprint, dayStart, planAt } from '../../shared/blueprints';
+import {
+  buyTile,
+  freeBlock,
+  newPlot,
+  placeOnPlot,
+  removeFromPlot,
+  rentDue,
+  type Plot,
+} from '../../shared/plots';
 import {
   applyDeliver,
   applyPlace,
@@ -21,6 +31,8 @@ import {
 } from '../../shared/rules';
 import type { DropSpec, PalletSpec, PieceSpec } from '../../shared/structure';
 import {
+  parsePlot,
+  parsePlotResponse,
   parseSiteResponse,
   parseStateResponse,
   parseTower,
@@ -32,6 +44,9 @@ export type GameView = {
   tower: TowerState;
   /** null when logged out. */
   username: string | null;
+  /** Every player's plot in this post's city. */
+  plots: Plot[];
+  coins: number;
 };
 
 export type SiteResult =
@@ -43,6 +58,10 @@ export type BuildOp =
   | { op: 'return'; pallet: PalletSpec }
   | { op: 'remove'; slot: string };
 
+export type PlotResult =
+  | { ok: true; view: GameView; finished: string | null; bonus: number }
+  | { ok: false; reason: string; view: GameView };
+
 export type GameService = {
   load(): Promise<GameView>;
   /**
@@ -52,6 +71,8 @@ export type GameService = {
   siteWork(work: SiteWork, x: number, z: number): Promise<SiteResult>;
   /** Place a piece, or take down one of your own by its slot. Unlimited. */
   build(op: BuildOp): Promise<SiteResult>;
+  /** Claim a plot, buy land, or build on your own plot. */
+  plot(op: PlotRequest): Promise<PlotResult>;
 };
 
 // ---------------------------------------------------------------------------
@@ -64,6 +85,8 @@ const toView = (s: StateResponse): GameView => ({
   challenge: makeChallenge(s.dateKey),
   tower: s.tower,
   username: s.username,
+  plots: s.plots,
+  coins: s.coins,
 });
 
 const isApiError = (v: unknown): v is ApiError =>
@@ -131,6 +154,22 @@ export const createServerService = (): GameService => {
       const body: BuildRequest = { dateKey, ...op };
       return result(await post('/api/build', body));
     },
+    async plot(op) {
+      const r = await request('/api/plot', parsePlotResponse, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(op),
+      });
+      dateKey = r.state.dateKey;
+      return r.ok
+        ? {
+            ok: true,
+            view: toView(r.state),
+            finished: r.finished,
+            bonus: r.bonus,
+          }
+        : { ok: false, reason: r.reason, view: toView(r.state) };
+    },
   };
 };
 
@@ -159,13 +198,62 @@ const write = (key: string, tower: TowerState) => {
   }
 };
 
+/** The local city (your plot and coins) outlives each day, like on the server. */
+type LocalCity = { plot: Plot | null; coins: number };
+const CITY_KEY = 'skyshift:local:city';
+
+const readCity = (): LocalCity => {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(CITY_KEY) ?? 'null');
+    if (typeof v !== 'object' || v === null) return { plot: null, coins: 0 };
+    const plot = 'plot' in v ? parsePlot(v.plot) : null;
+    const coins =
+      'coins' in v && typeof v.coins === 'number' && v.coins >= 0
+        ? Math.floor(v.coins)
+        : 0;
+    return { plot, coins };
+  } catch {
+    return { plot: null, coins: 0 };
+  }
+};
+
+const writeCity = (c: LocalCity) => {
+  try {
+    localStorage.setItem(CITY_KEY, JSON.stringify(c));
+  } catch {
+    // Storage blocked: progress just won't persist.
+  }
+};
+
+/** Same reward as the server gives for each piece of today's blueprint. */
+const DAILY_PIECE_COINS = 3;
+
 export const createLocalService = (username = 'you') => {
   const dateKey = utcDateKey();
   const challenge = makeChallenge(dateKey);
   const key = `skyshift:local:${dateKey}`;
   let tower: TowerState = read(key) ?? dayStart(dateKey);
+  let city = readCity();
 
-  const view = (): GameView => ({ dateKey, challenge, tower, username });
+  const collectRent = () => {
+    if (!city.plot) return;
+    const due = rentDue(city.plot, Date.now());
+    if (due.coins === 0) return;
+    city = {
+      plot: { ...city.plot, rentAt: due.rentAt },
+      coins: city.coins + due.coins,
+    };
+    writeCity(city);
+  };
+
+  const view = (): GameView => ({
+    dateKey,
+    challenge,
+    tower,
+    username,
+    plots: city.plot ? [city.plot] : [],
+    coins: city.coins,
+  });
   const apply = (r: { state: TowerState } | { error: string }): SiteResult => {
     if ('error' in r) return { ok: false, reason: r.error, view: view() };
     tower = r.state;
@@ -175,21 +263,76 @@ export const createLocalService = (username = 'you') => {
 
   const service: GameService & { reset(): GameView } = {
     async load() {
+      collectRent();
       return view();
+    },
+    async plot(op) {
+      const now = Date.now();
+      const fail = (reason: string): PlotResult => ({
+        ok: false,
+        reason,
+        view: view(),
+      });
+      const save = (
+        plot: Plot,
+        coins: number,
+        finished: string | null,
+        bonus: number
+      ): PlotResult => {
+        city = { plot, coins };
+        writeCity(city);
+        return { ok: true, view: view(), finished, bonus };
+      };
+      if (op.op === 'claim') {
+        if (city.plot) return fail('You already have a plot.');
+        const block = freeBlock([]);
+        return block
+          ? save(newPlot(username, block, now), city.coins, null, 0)
+          : fail('No plots left.');
+      }
+      const mine = city.plot;
+      if (!mine) return fail('Get a plot first.');
+      if (op.op === 'buy') {
+        const r = buyTile(mine, city.coins);
+        return r.ok
+          ? save(r.plot, city.coins - r.price, null, 0)
+          : fail(r.reason);
+      }
+      if (op.op === 'place') {
+        const r = placeOnPlot(mine, op.piece, now);
+        return r.ok
+          ? save(r.plot, city.coins + r.bonus, r.finished, r.bonus)
+          : fail(r.reason);
+      }
+      const r = removeFromPlot(mine, op.slot);
+      return r.ok ? save(r.plot, city.coins, null, 0) : fail(r.reason);
     },
     async siteWork(work, x, z) {
       return apply(applySiteWork(tower, work, x, z, username, Date.now()));
     },
     async build(op) {
       const at = Date.now();
+      if (op.op === 'place') {
+        const res = apply(applyPlace(tower, op.piece, username, at));
+        const want = planAt(dailyBlueprint(dateKey), op.piece);
+        if (
+          res.ok &&
+          want &&
+          want.material === op.piece.material &&
+          want.dir === op.piece.dir
+        ) {
+          city = { ...city, coins: city.coins + DAILY_PIECE_COINS };
+          writeCity(city);
+          return { ok: true, view: view() };
+        }
+        return res;
+      }
       return apply(
-        op.op === 'place'
-          ? applyPlace(tower, op.piece, username, at)
-          : op.op === 'deliver'
-            ? applyDeliver(tower, op.drop, username, at)
-            : op.op === 'return'
-              ? applyReturn(tower, op.pallet, username, at)
-              : applyRemove(tower, op.slot, username, at)
+        op.op === 'deliver'
+          ? applyDeliver(tower, op.drop, username, at)
+          : op.op === 'return'
+            ? applyReturn(tower, op.pallet, username, at)
+            : applyRemove(tower, op.slot, username, at)
       );
     },
     reset() {

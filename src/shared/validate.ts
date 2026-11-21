@@ -1,5 +1,7 @@
 import type {
   BuildRequest,
+  PlotRequest,
+  PlotResponse,
   SiteRequest,
   SiteResponse,
   ShiftRequest,
@@ -7,6 +9,7 @@ import type {
   StateResponse,
 } from './api.ts';
 import { isValidDateKey } from './challenge.ts';
+import { LEVELS, PLOT_BLOCKS, type Plot } from './plots.ts';
 import { inCity, parseTileKey } from './city.ts';
 import {
   DECORATIONS,
@@ -360,7 +363,93 @@ export const parseStateResponse = (v: unknown): StateResponse | null => {
   const tower = parseTower(v.tower);
   const myShift = v.myShift === null ? null : parseContribution(v.myShift);
   if (!tower || (v.myShift !== null && !myShift)) return null;
-  return { dateKey: v.dateKey, tower, myShift, username: v.username };
+  // Plots and coins arrived with progression; older servers send none.
+  const plots =
+    'plots' in v && Array.isArray(v.plots)
+      ? v.plots.map(parsePlot).filter((p): p is Plot => p !== null)
+      : [];
+  const coins = 'coins' in v && isCount(v.coins) ? v.coins : 0;
+  return {
+    dateKey: v.dateKey,
+    tower,
+    myShift,
+    username: v.username,
+    plots,
+    coins,
+  };
+};
+
+/** A stored plot. Pieces that don't parse are dropped rather than losing the plot. */
+export const parsePlot = (v: unknown): Plot | null => {
+  if (
+    !isObject(v) ||
+    !('owner' in v) ||
+    !('block' in v) ||
+    !('tiles' in v) ||
+    !('level' in v) ||
+    !('pieces' in v) ||
+    !('rentAt' in v)
+  )
+    return null;
+  const b = v.block;
+  if (
+    typeof v.owner !== 'string' ||
+    !isObject(b) ||
+    !('bx' in b) ||
+    !('bz' in b) ||
+    typeof b.bx !== 'number' ||
+    typeof b.bz !== 'number' ||
+    !PLOT_BLOCKS.some((q) => q.bx === b.bx && q.bz === b.bz) ||
+    !isCount(v.level) ||
+    v.level > LEVELS.length ||
+    !isCount(v.rentAt) ||
+    !Array.isArray(v.pieces)
+  )
+    return null;
+  return {
+    owner: v.owner,
+    block: { bx: b.bx, bz: b.bz },
+    tiles: parseTileKeys(v.tiles),
+    level: v.level,
+    pieces: v.pieces.map(parsePiece).filter((p): p is Piece => p !== null),
+    rentAt: v.rentAt,
+  };
+};
+
+export const parsePlotJson = (raw: string | undefined | null): Plot | null =>
+  parsePlot(parseJson(raw));
+
+export const parsePlotRequest = (v: unknown): PlotRequest | null => {
+  if (!isObject(v) || !('op' in v)) return null;
+  if (v.op === 'claim') return { op: 'claim' };
+  if (v.op === 'buy') return { op: 'buy' };
+  if (v.op === 'place' && 'piece' in v) {
+    const piece = parsePieceSpec(v.piece);
+    return piece ? { op: 'place', piece } : null;
+  }
+  if (
+    v.op === 'remove' &&
+    'slot' in v &&
+    typeof v.slot === 'string' &&
+    v.slot.length <= 64
+  )
+    return { op: 'remove', slot: v.slot };
+  return null;
+};
+
+export const parsePlotResponse = (v: unknown): PlotResponse | null => {
+  if (!isObject(v) || !('ok' in v) || !('state' in v)) return null;
+  const state = parseStateResponse(v.state);
+  if (!state) return null;
+  if (v.ok === true) {
+    const finished =
+      'finished' in v && typeof v.finished === 'string' ? v.finished : null;
+    const bonus = 'bonus' in v && isCount(v.bonus) ? v.bonus : 0;
+    return { ok: true, state, finished, bonus };
+  }
+  if (v.ok === false && 'reason' in v && typeof v.reason === 'string')
+    return { ok: false, reason: v.reason, state };
+  return null;
 };
 
 export const parseShiftResponse = (v: unknown): ShiftResponse | null => {

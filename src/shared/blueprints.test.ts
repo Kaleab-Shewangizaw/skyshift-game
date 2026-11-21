@@ -6,6 +6,7 @@ import {
   dailyBlueprint,
   dayStart,
   house,
+  latticeTower,
   pavilion,
   planAt,
   progressOf,
@@ -61,6 +62,7 @@ void test('every blueprint can be built piece by piece under the rules', () => {
     pavilion(-5, -1),
     house(-5, -1, 'timber'),
     watchtower(-5, -1),
+    latticeTower(-5, -1),
   ]) {
     const s = buildAll(bp);
     const prog = progressOf(bp, s.pieces);

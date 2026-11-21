@@ -12,14 +12,16 @@ import {
   type PieceSpec,
   type WallMaterial,
 } from '../../shared/structure';
-import { controls, takeJump } from '../game/controls';
+import { controls, takeJump, takeTeleport } from '../game/controls';
 import { CRANE_POS, PAD_TOP } from './layout';
 import { step, storeyOf, type Body, type Collider } from './physics';
 
 type Props = {
   colliders: readonly Collider[];
-  /** False while another view (site overview) has the camera. */
+  /** False while another view (the crane cab) has the camera. */
   drive: boolean;
+  /** Site work: pull the camera up and back around the worker to see the tiles. */
+  overview: boolean;
   kind: PieceKind;
   material: WallMaterial;
   /** Called when the spot in front of the worker changes. */
@@ -44,6 +46,7 @@ const EYE = 1.5;
 export const Player = ({
   colliders,
   drive,
+  overview,
   kind,
   material,
   onAim,
@@ -74,6 +77,26 @@ export const Player = ({
   const lastAim = useRef('');
   const nearCrane = useRef(false);
   const lastCell = useRef('');
+  // Camera offset (from the worker) to ease toward, and the one to come back to.
+  const wantOffset = useRef<THREE.Vector3 | null>(null);
+  const savedOffset = useRef<THREE.Vector3 | null>(null);
+
+  useEffect(() => {
+    const c = orbit.current;
+    if (!c) return;
+    const offset = camera.position.clone().sub(c.target);
+    if (overview) {
+      // Keep facing the same way, but rise up and back for a view over the tiles.
+      savedOffset.current = offset.clone();
+      const sph = new THREE.Spherical().setFromVector3(offset);
+      sph.radius = Math.max(sph.radius, 55);
+      sph.phi = 0.7;
+      wantOffset.current = new THREE.Vector3().setFromSpherical(sph);
+    } else if (savedOffset.current) {
+      wantOffset.current = savedOffset.current;
+      savedOffset.current = null;
+    }
+  }, [overview, camera]);
 
   useEffect(() => {
     if (!drive) return;
@@ -96,8 +119,14 @@ export const Player = ({
       b.z - Math.cos(b.heading) * 12
     );
     c.update();
+    // Taking the camera by hand cancels any glide in progress.
+    const takeOver = () => {
+      wantOffset.current = null;
+    };
+    c.addEventListener('start', takeOver);
     orbit.current = c;
     return () => {
+      c.removeEventListener('start', takeOver);
       c.dispose();
       orbit.current = null;
     };
@@ -120,6 +149,14 @@ export const Player = ({
       const px = b.x;
       const py = b.y;
       const pz = b.z;
+      // Travel buttons: land a little above the spot and drop onto whatever is there.
+      const jump = takeTeleport();
+      if (jump) {
+        b.x = jump.x;
+        b.z = jump.z;
+        b.y = 12;
+        b.vy = 0;
+      }
       step(
         b,
         {
@@ -133,6 +170,14 @@ export const Player = ({
       // The camera rides along with the worker.
       camera.position.add(new THREE.Vector3(b.x - px, b.y - py, b.z - pz));
       c.target.set(b.x, b.y + EYE, b.z);
+      // Glide toward the requested view; dragging the camera cancels it.
+      const glide = wantOffset.current;
+      if (glide) {
+        const offset = camera.position.clone().sub(c.target);
+        offset.lerp(glide, Math.min(1, dt * 4));
+        camera.position.copy(c.target).add(offset);
+        if (offset.distanceTo(glide) < 0.2) wantOffset.current = null;
+      }
       c.update();
 
       const moving = Math.hypot(b.x - px, b.z - pz) / dt;

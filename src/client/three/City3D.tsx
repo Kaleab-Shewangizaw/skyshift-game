@@ -1,9 +1,8 @@
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Challenge } from '../../shared/challenge';
-import { TILE, siteTiles, type Tile } from '../../shared/city';
+import type { Tile } from '../../shared/city';
 import type { SiteWork, TowerState } from '../../shared/rules';
 import {
   STOREY,
@@ -52,16 +51,6 @@ const FOV = 50;
 export const City3D = (p: City3DProps) => {
   const night = p.challenge.theme.tag === 'night';
   const { site, pads, pieces } = p.tower;
-  // How far the site (plus one ring of neighbors) reaches from the origin, in meters.
-  const siteRadius = useMemo(
-    () =>
-      (Math.max(
-        ...siteTiles(site).map((t) => Math.max(Math.abs(t.x), Math.abs(t.z)))
-      ) +
-        1.5) *
-      TILE,
-    [site]
-  );
   const colliders = useMemo(
     () => buildColliders(site, pads, pieces, CRANE_POS, STACK_POS),
     [site, pads, pieces]
@@ -118,7 +107,8 @@ export const City3D = (p: City3DProps) => {
       />
       <Player
         colliders={colliders}
-        drive={!p.siteMode && !p.inCrane}
+        drive={!p.inCrane}
+        overview={p.siteMode}
         visible={!p.inCrane}
         onNearCrane={p.onNearCrane}
         onCell={p.onCell}
@@ -130,13 +120,6 @@ export const City3D = (p: City3DProps) => {
         <CraneOperator buildingTop={buildingTop} onAim={p.onCraneAim} />
       )}
       <ViewOffset insetTop={p.insetTop} insetBottom={p.insetBottom} />
-      {p.siteMode && (
-        <SiteOverview
-          radius={siteRadius}
-          insetTop={p.insetTop}
-          insetBottom={p.insetBottom}
-        />
-      )}
     </Canvas>
   );
 };
@@ -243,79 +226,5 @@ const ViewOffset = ({
     camera.setViewOffset(size.width, h, 0, h / 2 - gapCenter, size.width, h);
     camera.updateProjectionMatrix();
   }, [camera, size, insetTop, insetBottom]);
-  return null;
-};
-
-/**
- * Site work camera: orbit around the site from above, easing out to fit the
- * whole site and its neighbors until the player takes over.
- */
-const SiteOverview = ({
-  radius,
-  insetTop,
-  insetBottom,
-}: {
-  radius: number;
-  insetTop: number;
-  insetBottom: number;
-}) => {
-  const camera = useThree((s) => s.camera);
-  const gl = useThree((s) => s.gl);
-  const size = useThree((s) => s.size);
-  const controls = useRef<OrbitControls | null>(null);
-  const touched = useRef(false);
-
-  useEffect(() => {
-    const c = new OrbitControls(camera, gl.domElement);
-    c.enableDamping = true;
-    c.dampingFactor = 0.08;
-    c.enablePan = false;
-    c.minDistance = 16;
-    c.maxDistance = 360;
-    c.minPolarAngle = 0.3;
-    c.maxPolarAngle = 1.12;
-    c.target.set(0, 2, 0);
-    const onStart = () => {
-      touched.current = true;
-    };
-    c.addEventListener('start', onStart);
-    controls.current = c;
-    return () => {
-      c.removeEventListener('start', onStart);
-      c.dispose();
-      controls.current = null;
-    };
-  }, [camera, gl]);
-
-  useFrame((_, dt) => {
-    const c = controls.current;
-    if (!c) return;
-    if (!touched.current && camera instanceof THREE.PerspectiveCamera) {
-      const k = Math.min(1, dt * 1.8);
-      c.target.lerp(new THREE.Vector3(0, 2, 0), k);
-      const gapFrac = Math.max(
-        0.25,
-        (size.height - insetTop - insetBottom) / size.height
-      );
-      const halfTan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-      const want = THREE.MathUtils.clamp(
-        Math.max(
-          radius / (halfTan * camera.aspect),
-          (radius * 0.75) / (halfTan * gapFrac)
-        ),
-        c.minDistance,
-        c.maxDistance
-      );
-      const sph = new THREE.Spherical().setFromVector3(
-        camera.position.clone().sub(c.target)
-      );
-      sph.radius += (want - sph.radius) * k;
-      sph.phi += (0.62 - sph.phi) * k;
-      camera.position
-        .copy(c.target)
-        .add(new THREE.Vector3().setFromSpherical(sph));
-    }
-    c.update();
-  });
   return null;
 };

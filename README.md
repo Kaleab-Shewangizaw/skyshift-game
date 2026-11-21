@@ -16,6 +16,17 @@ info line tells you when the spot you aim at is "✓ on the plan" (or which mate
 wants). The day's site starts with pads already poured under the blueprint. In local play
 mode, **📋 copy blueprint** copies whatever is built as blueprint data, for authoring levels.
 
+## Your plot (progression)
+
+Tap **🏠 Get a plot** to claim a city block (3 × 3 tiles; 24 per post, nearest first) in
+the post's shared city. You start with one tile and work through levels, each a blueprint
+on your land: brick cottage → glass pavilion → stone house → braced watchtower → iron
+lattice tower (Eiffel-style). Finishing a level pays a bonus and the building is rented
+out: it earns coins every hour, even while you're away. Each piece you add to today's
+blueprint pays 🪙 3. Bigger levels need more land: **Buy a tile** on your plot card.
+**🏠 My plot** and **📋 Today** jump between your plot and today's build. Everyone sees
+everyone's plots. Rules: `src/shared/plots.ts` (a test plays the whole campaign).
+
 ## Controls
 
 - **Walk**: on-screen joystick, or WASD / arrow keys. **Jump**: ⤒ button or Space.
@@ -94,6 +105,9 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
 - `POST /api/site` `{ dateKey, work, x, z }`: `demolish` clears a city tile touching the
   site (the site grows, up to 30 tiles); `prepare` levels a site tile into a buildable pad.
 - `POST /api/build` `{ dateKey, op: 'place', piece }` or `{ dateKey, op: 'remove', slot }`.
+- `POST /api/plot` `{ op: 'claim' | 'buy' }`, `{ op: 'place', piece }`, `{ op: 'remove', slot }`.
+- Redis (no expiry, the city persists): `plots:{postId}` (hash userId → plot JSON) and
+  `coins:{postId}` (hash userId → coins). Rent is paid out on `GET /api/state`.
 - The server takes the day from its own clock, the user from `context.userId` and the post
   from `context.postId`. Bodies are validated in `src/shared/validate.ts` and applied with
   the shared rules.

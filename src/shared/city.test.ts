@@ -38,8 +38,11 @@ void test('only tiles touching the site can be demolished', () => {
   assert.equal(canDemolish([], 3, 0).ok, false); // one tile too far
   assert.equal(canDemolish([], 0, 0).ok, false); // already site
   assert.equal(canDemolish([], CITY_RADIUS + 1, 0).ok, false);
-  // After clearing the road, the building behind it becomes reachable.
-  assert.equal(canDemolish([tileKey(2, 0)], 3, 0).ok, true);
+  // Clearing a road makes the corner beyond it reachable.
+  assert.equal(canDemolish([], 2, 2).ok, false);
+  assert.equal(canDemolish([tileKey(2, 1)], 2, 2).ok, true);
+  // The blocks beyond the ring road are players' plots.
+  assert.equal(canDemolish([tileKey(2, 0)], 3, 0).ok, false);
 });
 
 void test('demolishing grows the site and logs it, but costs no shift', () => {

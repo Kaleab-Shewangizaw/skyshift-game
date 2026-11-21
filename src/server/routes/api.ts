@@ -1,11 +1,21 @@
 import { Hono } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import type { ApiError, SiteResponse, StateResponse } from '../../shared/api';
+import type {
+  ApiError,
+  PlotResponse,
+  SiteResponse,
+  StateResponse,
+} from '../../shared/api';
 import { utcDateKey } from '../../shared/challenge';
-import { parseBuildRequest, parseSiteRequest } from '../../shared/validate';
+import {
+  parseBuildRequest,
+  parsePlotRequest,
+  parseSiteRequest,
+} from '../../shared/validate';
+import { collectRent, plotAction } from '../core/plots';
+import { TowerBusyError } from '../core/txn';
 import {
   CorruptTowerError,
-  TowerBusyError,
   doBuild,
   doSiteWork,
   loadState,
@@ -46,8 +56,42 @@ api.get('/state', async (c) => {
   const username = userId
     ? ((await reddit.getCurrentUsername()) ?? null)
     : null;
+  // Rent from the player's buildings accrues while they're away.
+  if (userId) await collectRent(postId, userId, Date.now());
   return c.json<StateResponse>(
     await loadState(postId, dateKey, userId, username)
+  );
+});
+
+api.post('/plot', async (c) => {
+  const { postId, userId } = context;
+  if (!postId)
+    return c.json(fail('This only works inside a Skyshift post.'), 400);
+  const body: unknown = await c.req.json().catch(() => null);
+  const req = parsePlotRequest(body);
+  if (!req) return c.json(fail("The city planner couldn't read that."), 400);
+
+  const dateKey = utcDateKey();
+  const username = userId
+    ? ((await reddit.getCurrentUsername()) ?? null)
+    : null;
+  if (!userId || !username) {
+    const state = await loadState(postId, dateKey, undefined, null);
+    return c.json<PlotResponse>({
+      ok: false,
+      reason: 'Log in to Reddit to get a plot.',
+      state,
+    });
+  }
+  return c.json<PlotResponse>(
+    await plotAction({
+      postId,
+      userId,
+      username,
+      request: req,
+      now: Date.now(),
+      state: () => loadState(postId, dateKey, userId, username),
+    })
   );
 });
 

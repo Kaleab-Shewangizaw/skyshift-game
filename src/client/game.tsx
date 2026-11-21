@@ -14,9 +14,18 @@ import {
 } from 'react';
 import { createRoot } from 'react-dom/client';
 import { dailyBlueprint, planAt, progressOf } from '../shared/blueprints';
+import {
+  blockKey,
+  currentLevel,
+  plotAt,
+  removeFromPlot,
+  tilesNeeded,
+  type Block,
+} from '../shared/plots';
 import { roundEndsAt } from '../shared/challenge';
 import {
   MAX_SITE_TILES,
+  SITE_REACH,
   canDemolish,
   canPrepare,
   demolishCandidates,
@@ -33,6 +42,7 @@ import {
   canDeliver,
   canPlace,
   canRemove,
+  cellTile,
   describePiece,
   deliveryTarget,
   steelOf,
@@ -44,10 +54,11 @@ import {
   type WallMaterial,
 } from '../shared/structure';
 import { PlanCard } from './components/PlanCard';
+import { PlotCard } from './components/PlotCard';
 import { SitePanel } from './components/SitePanel';
 import { WorkerHud } from './components/WorkerHud';
 import { CraneHud } from './components/CraneHud';
-import { useKeyboard } from './game/controls';
+import { requestTeleport, useKeyboard } from './game/controls';
 import {
   attachLoad,
   dropLoad,
@@ -92,6 +103,15 @@ const makeBackend = (): Backend =>
     : { kind: 'server', service: createServerService() };
 
 type SiteFx = { work: SiteWork; x: number; z: number; key: number };
+
+/** The spot in front of the worker: where it is (own plot or today's build) and whether it can be built. */
+type Aim = {
+  spec: PieceSpec;
+  level: number;
+  where: 'plot' | 'daily';
+  state: GhostState;
+  reason: string | null;
+};
 
 // The 3D scene (three.js) loads after the HUD so the first paint stays fast.
 const City3D = lazy(() =>
@@ -164,17 +184,53 @@ export const App = () => {
   const pieces = view?.tower.pieces;
   const pads = view?.tower.pads;
   const pallets = view?.tower.pallets;
-  const aim = useMemo(() => {
+  // ---- Plots: everyone's land in this post's city ----
+  const plots = useMemo(() => view?.plots ?? [], [view]);
+  const myPlot = plots.find((p) => p.owner === me) ?? null;
+  const coins = view?.coins ?? 0;
+  const myLevel = myPlot ? currentLevel(myPlot) : null;
+  const plotPlan = useMemo(
+    () => (myPlot && myLevel ? myLevel.blueprint(myPlot.block) : null),
+    [myPlot, myLevel]
+  );
+  const plotProgress = useMemo(
+    () => (myPlot && plotPlan ? progressOf(plotPlan, myPlot.pieces) : null),
+    [myPlot, plotPlan]
+  );
+
+  // Where the worker aims decides the rules: their own plot, someone else's, or today's build.
+  const aim = useMemo((): Aim | null => {
     if (!target || !pieces || !pads || !pallets) return null;
     const key = slotKey(target.spec);
+    const owner = plotAt(plots, target.spec);
+    if (owner && owner !== myPlot)
+      return {
+        ...target,
+        where: 'plot',
+        state: 'bad',
+        reason: `That's u/${owner.owner}'s plot.`,
+      };
+    if (owner && myPlot) {
+      const there = myPlot.pieces.some((p) => slotKey(p) === key);
+      const c = there
+        ? removeFromPlot(myPlot, key)
+        : canPlace(myPlot.pieces, myPlot.tiles, target.spec, null);
+      const state: GhostState = !c.ok ? 'bad' : there ? 'remove' : 'ok';
+      return {
+        ...target,
+        where: 'plot',
+        state,
+        reason: c.ok ? null : c.reason,
+      };
+    }
     const there = pieces.some((p) => slotKey(p) === key);
     // Aiming at an existing piece offers to take it down; otherwise to place one.
     const c = there
       ? canRemove(pieces, key, me, pallets)
       : canPlace(pieces, pads, target.spec, pallets);
     const state: GhostState = !c.ok ? 'bad' : there ? 'remove' : 'ok';
-    return { ...target, state, reason: c.ok ? null : c.reason };
-  }, [target, pieces, pads, pallets, me]);
+    return { ...target, where: 'daily', state, reason: c.ok ? null : c.reason };
+  }, [target, pieces, pads, pallets, me, plots, myPlot]);
 
   // ---- Today's community blueprint ----
   const dateKey = view?.dateKey;
@@ -189,13 +245,37 @@ export const App = () => {
   const [cheer, setCheer] = useState<string | null>(null);
   // Does the spot the worker aims at match the plan?
   const planNote = useMemo(() => {
-    if (!daily || !aim || aim.state === 'remove') return null;
-    const want = planAt(daily, aim.spec);
+    const bp = aim?.where === 'plot' ? plotPlan : daily;
+    if (!bp || !aim || aim.state === 'remove') return null;
+    const want = planAt(bp, aim.spec);
     if (!want) return null;
     return want.material === aim.spec.material && want.dir === aim.spec.dir
       ? '✓ on the plan'
       : `the plan wants ${describePiece(want).replace(/ on floor \d+$/, '')} here`;
-  }, [daily, aim]);
+  }, [daily, plotPlan, aim]);
+
+  // The world the 3D scene shows: today's site plus every player's plot.
+  // Memoized: the scene rebuilds its colliders and meshes when these change.
+  const world = useMemo(() => {
+    if (!view) return null;
+    const t = view.tower;
+    const plotTiles = plots.flatMap((p) => p.tiles);
+    return {
+      ...t,
+      site: [...t.site, ...plotTiles],
+      pads: [...t.pads, ...plotTiles],
+      pieces: [...t.pieces, ...plots.flatMap((p) => p.pieces)],
+    };
+  }, [view, plots]);
+  const plan = useMemo(
+    () => [
+      ...(progress?.missing ?? []),
+      ...(myPlot && plotProgress && tilesNeeded(myPlot).length === 0
+        ? plotProgress.missing
+        : []),
+    ],
+    [progress, myPlot, plotProgress]
+  );
 
   // Steel left on the worker's floor, once floors need crane deliveries.
   const steel = steelOf(kind);
@@ -208,6 +288,20 @@ export const App = () => {
     if (!aim || aim.state === 'bad') return;
     setBusy(true);
     try {
+      if (aim.where === 'plot') {
+        const r = await service.plot(
+          aim.state === 'remove'
+            ? { op: 'remove', slot: slotKey(aim.spec) }
+            : { op: 'place', piece: aim.spec }
+        );
+        setView(r.view);
+        if (!r.ok) setNotice(r.reason);
+        else if (r.finished)
+          setCheer(
+            `🏆 ${r.finished} finished! +🪙 ${r.bonus}. It's rented out now.`
+          );
+        return;
+      }
       const r = await service.build(
         aim.state === 'remove'
           ? { op: 'remove', slot: slotKey(aim.spec) }
@@ -319,6 +413,44 @@ export const App = () => {
       setBusy(false);
     }
   };
+
+  // ---- Your plot: claim it, travel to it, buy land ----
+  const [plotBusy, setPlotBusy] = useState(false);
+  const goToPlot = (b: Block) =>
+    // Land on the plot's corner cell, beside where the first building goes.
+    requestTeleport(48 * b.bx - 16.5, 48 * b.bz - 16.5);
+  const plotOp = async (
+    op: { op: 'claim' } | { op: 'buy' },
+    after?: (v: GameView) => void
+  ) => {
+    setPlotBusy(true);
+    try {
+      const r = await service.plot(op);
+      setView(r.view);
+      if (!r.ok) setNotice(r.reason);
+      else after?.(r.view);
+    } catch (e) {
+      setNotice(
+        e instanceof Error ? e.message : 'The city office is closed. Try again.'
+      );
+    } finally {
+      setPlotBusy(false);
+    }
+  };
+  const claimPlot = () =>
+    plotOp({ op: 'claim' }, (v) => {
+      const mine = v.plots.find((p) => p.owner === (v.username ?? 'you'));
+      if (mine) {
+        goToPlot(mine.block);
+        setCheer(
+          `🏠 Welcome to your plot on block ${blockKey(mine.block)}! Start with the brick cottage.`
+        );
+      }
+    });
+  const buyLand = () =>
+    plotOp({ op: 'buy' }, () =>
+      setCheer('🧾 Land bought and the pads are poured. Build away!')
+    );
 
   useEffect(() => {
     if (!cheer) return;
@@ -470,6 +602,13 @@ export const App = () => {
   const endsIn = formatLeft(roundEndsAt(view.dateKey) - now);
   const latest = tower.recent[0];
 
+  // Standing on your own block shows your plot's card; anywhere else, today's build.
+  const onMyPlot =
+    !!myPlot &&
+    !!cell &&
+    blockOf(cell.x) === myPlot.block.bx &&
+    blockOf(cell.z) === myPlot.block.bz;
+
   return (
     <div
       ref={root}
@@ -479,14 +618,14 @@ export const App = () => {
       <div className="absolute inset-0 z-0">
         <Suspense fallback={null}>
           <City3D
-            tower={tower}
+            tower={world ?? tower}
             challenge={challenge}
             insetTop={insets.top}
             insetBottom={insets.bottom}
             kind={kind}
             material={material}
             onAim={onAim}
-            plan={progress?.missing ?? []}
+            plan={plan}
             build={
               siteMode
                 ? null
@@ -544,11 +683,38 @@ export const App = () => {
             <button
               className="btn3d btn-red px-3 py-1 text-[12px] font-bold"
               onClick={() => {
+                // Site work edits today's build: hop there first if the worker is away.
+                const away =
+                  !cell ||
+                  Math.max(
+                    Math.abs(cellTile(cell.x)),
+                    Math.abs(cellTile(cell.z))
+                  ) > SITE_REACH;
+                if (away) requestTeleport(0, 3);
                 setSiteMode(true);
                 setSiteError(null);
               }}
             >
               🏗️ Site work
+            </button>
+            <span
+              className="chip px-2 py-0.5 text-[12px] font-bold"
+              title="Coins"
+            >
+              🪙 {coins}
+            </span>
+            <button
+              className="btn3d btn-yellow px-2.5 py-1 text-[12px] font-bold"
+              disabled={plotBusy}
+              onClick={myPlot ? () => goToPlot(myPlot.block) : claimPlot}
+            >
+              {myPlot ? '🏠 My plot' : '🏠 Get a plot'}
+            </button>
+            <button
+              className="btn3d btn-cream px-2.5 py-1 text-[12px] font-bold"
+              onClick={() => requestTeleport(0, 3)}
+            >
+              📋 Today
             </button>
             {LOCAL_DEMO && backend.kind === 'local' && (
               <>
@@ -579,10 +745,24 @@ export const App = () => {
           </div>
         )}
 
-        {!siteMode && daily && progress && (
+        {!siteMode && onMyPlot && myPlot ? (
           <div className="pointer-events-auto">
-            <PlanCard blueprint={daily} progress={progress} />
+            <PlotCard
+              plot={myPlot}
+              progress={plotProgress}
+              coins={coins}
+              busy={plotBusy}
+              onBuy={buyLand}
+            />
           </div>
+        ) : (
+          !siteMode &&
+          daily &&
+          progress && (
+            <div className="pointer-events-auto">
+              <PlanCard blueprint={daily} progress={progress} />
+            </div>
+          )
         )}
 
         {/* The open gap: touches here go through to the 3D camera. */}
@@ -706,6 +886,9 @@ const Ticker = ({ c, now }: { c: Contribution; now: number }) => (
     </div>
   </div>
 );
+
+/** City block of a grid cell index (blocks are 4 tiles = 16 cells apart). */
+const blockOf = (c: number) => Math.round(cellTile(c) / 4);
 
 const Centered = ({ children }: { children: ReactNode }) => (
   <div className="flex h-full flex-col items-center justify-center bg-gradient-to-b from-[#6c8cff] to-[#b18cff] p-6 text-center">

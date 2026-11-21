@@ -112,6 +112,10 @@ Each stage ends playable in `npm run play` and on Reddit.
    see-through plan, progress card, completion cheer, pads pre-poured, dev copy tool;
    a test builds every blueprint under the rules. Still to do: finished dailies joining
    the skyline (with plots, step 3).
+   ✅ **Plots, levels and rent** (done 2026-11-21, `src/shared/plots.ts`, `server/core/plots.ts`):
+   one block per player (24 per post), 5 levels from cottage to an Eiffel-style lattice
+   tower, completion bonus + hourly rent, land bought tile by tile, 🪙 3 per daily-plan
+   piece, travel buttons. Plots carry steel by hand at any height (a plot crane is later).
 7. **Market and stockpile, live presence** (other workers appear via realtime).
 8. **Day test and result card**, then **submission polish** (splash, onboarding, mobile QA).
 

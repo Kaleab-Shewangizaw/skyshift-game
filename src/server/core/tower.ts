@@ -1,4 +1,5 @@
 import { redis } from '@devvit/web/server';
+import { RETRY, committed, optimistic } from './txn';
 import type {
   BuildRequest,
   SiteResponse,
@@ -14,7 +15,9 @@ import {
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
-import { dayStart } from '../../shared/blueprints';
+import { dailyBlueprint, dayStart, planAt } from '../../shared/blueprints';
+import type { PieceSpec } from '../../shared/structure';
+import { addCoins, readCity } from './plots';
 import { parseContributionJson, parseTowerJson } from '../../shared/validate';
 
 // Redis layout (one round = one post on one UTC day):
@@ -24,7 +27,6 @@ import { parseContributionJson, parseTowerJson } from '../../shared/validate';
 // generous so end-of-day results (stage 3) can still read yesterday's tower.
 
 const ROUND_TTL_S = 60 * 60 * 24 * 14;
-const MAX_ATTEMPTS = 5;
 
 export const towerKey = (postId: string, dateKey: string) =>
   `tower:${postId}:${dateKey}`;
@@ -32,35 +34,6 @@ export const shiftsKey = (postId: string, dateKey: string) =>
   `shifts:${postId}:${dateKey}`;
 
 export class CorruptTowerError extends Error {}
-export class TowerBusyError extends Error {}
-
-const sleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-type Txn = Awaited<ReturnType<typeof redis.watch>>;
-
-/** Returned by an attempt whose EXEC lost a race; the loop retries. */
-const RETRY = Symbol('retry');
-
-/**
- * Optimistic concurrency loop: WATCH `keys`, let `attempt` read, decide and
- * queue writes, retry with backoff while EXEC reports a conflict.
- */
-const optimistic = async <T>(
-  keys: string[],
-  attempt: (txn: Txn) => Promise<T | typeof RETRY>
-): Promise<T> => {
-  for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    const txn = await redis.watch(...keys);
-    const result = await attempt(txn);
-    if (result !== RETRY) return result;
-    // Someone else wrote at the same moment: back off a little and retry.
-    await sleep(15 * 2 ** i + Math.random() * 25);
-  }
-  throw new TowerBusyError(
-    `Gave up on ${keys.join(', ')} after ${MAX_ATTEMPTS} attempts`
-  );
-};
 
 export const loadState = async (
   postId: string,
@@ -80,8 +53,21 @@ export const loadState = async (
     throw new CorruptTowerError(
       `Unreadable tower at ${towerKey(postId, dateKey)}`
     );
-  return { dateKey, tower, myShift: parseContributionJson(rawMine), username };
+  const city = await readCity(postId, userId);
+  return {
+    dateKey,
+    tower,
+    myShift: parseContributionJson(rawMine),
+    username,
+    ...city,
+  };
 };
+
+/** Today's part of the state; the city is added once the edit is saved. */
+type DayState = Omit<StateResponse, 'plots' | 'coins'>;
+type DayResult =
+  | { ok: true; state: DayState }
+  | { ok: false; reason: string; state: DayState };
 
 type Editor = {
   postId: string;
@@ -103,7 +89,7 @@ const editTower = async (
 ): Promise<SiteResponse> => {
   const tk = towerKey(p.postId, p.dateKey);
   const sk = shiftsKey(p.postId, p.dateKey);
-  return optimistic<SiteResponse>([tk], async (txn) => {
+  const r = await optimistic<DayResult>([tk], async (txn) => {
     const [rawTower, rawMine] = await Promise.all([
       redis.get(tk),
       redis.hGet(sk, p.userId),
@@ -146,6 +132,8 @@ const editTower = async (
     }
     return RETRY;
   });
+  const city = await readCity(p.postId, p.userId);
+  return { ...r, state: { ...r.state, ...city } };
 };
 
 /** Demolish a city tile next to the site, or pour a pad on a site tile. */
@@ -156,15 +144,38 @@ export const doSiteWork = (
     applySiteWork(t, p.work, p.x, p.z, p.username, p.now)
   );
 
+/** Coins for each piece of today's blueprint a player puts in. */
+const DAILY_PIECE_COINS = 3;
+
+const placeDaily = async (
+  p: Editor,
+  piece: PieceSpec
+): Promise<SiteResponse> => {
+  const res = await editTower(p, 'place', (t) =>
+    applyPlace(t, piece, p.username, p.now)
+  );
+  const want = planAt(dailyBlueprint(p.dateKey), piece);
+  if (
+    res.ok &&
+    want &&
+    want.material === piece.material &&
+    want.dir === piece.dir
+  ) {
+    await addCoins(p.postId, p.userId, DAILY_PIECE_COINS);
+    return {
+      ...res,
+      state: { ...res.state, coins: res.state.coins + DAILY_PIECE_COINS },
+    };
+  }
+  return res;
+};
+
 /** Place a piece, take down one of your own, or set down a crane delivery. */
 export const doBuild = (
   p: Editor & { request: BuildRequest }
 ): Promise<SiteResponse> => {
   const r = p.request;
-  if (r.op === 'place')
-    return editTower(p, 'place', (t) =>
-      applyPlace(t, r.piece, p.username, p.now)
-    );
+  if (r.op === 'place') return placeDaily(p, r.piece);
   if (r.op === 'return')
     return editTower(p, 'return', (t) =>
       applyReturn(t, r.pallet, p.username, p.now)
@@ -176,22 +187,4 @@ export const doBuild = (
   return editTower(p, 'remove', (t) =>
     applyRemove(t, r.slot, p.username, p.now)
   );
-};
-
-/**
- * Redis reports a WATCH conflict as a null EXEC reply. Depending on the client
- * that surfaces as a throw, null, or an empty array, so anything other than
- * one reply per queued command counts as "not committed".
- */
-const committed = async (
-  exec: Promise<unknown[] | null>,
-  queued: number
-): Promise<boolean> => {
-  try {
-    const replies = await exec;
-    return Array.isArray(replies) && replies.length === queued;
-  } catch (error) {
-    console.warn('EXEC failed, treating as conflict:', error);
-    return false;
-  }
 };

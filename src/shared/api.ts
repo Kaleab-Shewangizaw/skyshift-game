@@ -1,3 +1,4 @@
+import type { Plot } from './plots.ts';
 import type { DropSpec, PalletSpec, PieceSpec } from './structure.ts';
 import type {
   Action,
@@ -16,7 +17,23 @@ export type StateResponse = {
   myShift: Contribution | null;
   /** null when the viewer is logged out. */
   username: string | null;
+  /** Every player's plot in this post's city (persists across days). */
+  plots: Plot[];
+  /** The viewer's coins (0 when logged out). */
+  coins: number;
 };
+
+/** POST /api/plot body: work on your own plot. */
+export type PlotRequest =
+  | { op: 'claim' }
+  | { op: 'buy' }
+  | { op: 'place'; piece: PieceSpec }
+  | { op: 'remove'; slot: string };
+
+/** `finished` names a level the request just completed; `bonus` is what it paid. */
+export type PlotResponse =
+  | { ok: true; state: StateResponse; finished: string | null; bonus: number }
+  | { ok: false; reason: string; state: StateResponse };
 
 /** POST /api/shift body. `dateKey` is the day the client was looking at. */
 export type ShiftRequest = {

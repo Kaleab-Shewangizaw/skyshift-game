@@ -218,6 +218,95 @@ export const watchtower = (ax: number, az: number): Blueprint => {
   };
 };
 
+/**
+ * Eiffel-style iron lattice tower on an 8 × 8-cell base. Four legs lean
+ * diagonally inward for two storeys to a first platform, lean in once more
+ * to a braced 2 × 2 core, which rises six storeys to a spire.
+ */
+export const latticeTower = (ax: number, az: number): Blueprint => {
+  const p = plan(ax, az);
+  const add = (
+    kind: PieceKind,
+    x: number,
+    z: number,
+    level: number,
+    dir: Dir | null = null
+  ) => p.out.push({ kind, x: ax + x, z: az + z, level, dir, material: null });
+  const B = 8;
+  // Legs: from each corner toward the middle, one cell per storey.
+  const legs: [number, number, Dir][] = [
+    [0, 0, 'x+z'],
+    [B, 0, '-x+z'],
+    [0, B, 'x-z'],
+    [B, B, '-x-z'],
+  ];
+  for (const [x, z] of [
+    [0, 0],
+    [B - 1, 0],
+    [0, B - 1],
+    [B - 1, B - 1],
+  ])
+    p.footing(x ?? 0, z ?? 0);
+  for (let L = 0; L < 3; L++)
+    for (const [x, z, dir] of legs) {
+      const [dx, dz] = [Math.sign(B / 2 - x), Math.sign(B / 2 - z)];
+      add('lean', x + dx * L, z + dz * L, L, dir);
+    }
+  // First platform: a 4 × 4 deck on the leg tops after two storeys.
+  const deck = (lo: number, hi: number, L: number) => {
+    for (let x = lo; x < hi; x++) {
+      p.beam(x, lo, L, 'x');
+      p.beam(x, hi, L, 'x');
+    }
+    for (let z = lo; z < hi; z++) {
+      p.beam(lo, z, L, 'z');
+      p.beam(hi, z, L, 'z');
+    }
+    // Slabs ring by ring from the edge inward, so each has two held sides.
+    const cells: [number, number][] = [];
+    for (let x = lo; x < hi; x++)
+      for (let z = lo; z < hi; z++) cells.push([x, z]);
+    const edgeDist = ([x, z]: [number, number]) =>
+      Math.min(x - lo, z - lo, hi - 1 - x, hi - 1 - z);
+    const corner = ([x, z]: [number, number]) =>
+      (x === lo || x === hi - 1) && (z === lo || z === hi - 1);
+    cells.sort(
+      (a, b) =>
+        edgeDist(a) - edgeDist(b) || Number(corner(b)) - Number(corner(a))
+    );
+    for (const [x, z] of cells) p.slab(x, z, L);
+  };
+  deck(2, B - 2, 1);
+  // The core: a ring of eight columns around a 2 × 2 square, braced on every side.
+  const lo = 3;
+  const hi = B - 3;
+  deck(lo, hi, 2);
+  const ring: [number, number][] = [
+    [3, 3],
+    [4, 3],
+    [5, 3],
+    [5, 4],
+    [5, 5],
+    [4, 5],
+    [3, 5],
+    [3, 4],
+  ];
+  const TOP = 8;
+  for (let L = 3; L <= TOP; L++) {
+    for (const [x, z] of ring) p.column(x, z, L);
+    for (const [x, z, dir] of perimeter(2, 2)) p.brace(lo + x, lo + z, L, dir);
+  }
+  deck(lo, hi, TOP);
+  p.spire(4, 4, TOP + 1);
+  return {
+    id: 'lattice-tower',
+    name: 'Iron lattice tower',
+    blurb:
+      'Four leaning legs, a platform, a braced core and a spire. A landmark!',
+    pieces: p.out,
+  };
+};
+
 // ---------- The daily challenge ----------
 
 /** The daily build goes on the starting block, clear of the crane. */
