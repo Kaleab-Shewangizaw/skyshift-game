@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import {
   CELL,
   STOREY,
-  WALLS,
   buildableCells,
   slotKey,
   type Pallet,
@@ -12,85 +11,23 @@ import {
   type Piece,
   type PieceSpec,
 } from '../../shared/structure';
-import { PAD_TOP, pieceBox, pieceBoxes, type Box } from './layout';
+import {
+  CORNER,
+  CORNER_BOTTOM,
+  CORNER_TOP,
+  PAD_TOP,
+  SLAB_H,
+  WALL_LEN,
+  pieceBox,
+} from './layout';
+import { lookOf, partsFor, turnOf, type Part } from './pieceLooks';
 
-// Freeform building pieces drawn as boxes on the 3 m build grid.
-// Every piece is a scaled unit box, so each look is one instanced draw call.
-
-const look = (p: PieceSpec): string =>
-  p.kind === 'wall' ? `wall:${p.material ?? 'brick'}` : p.kind;
-
-const makeMaterial = (key: string): THREE.MeshStandardMaterial => {
-  switch (key) {
-    case 'foundation':
-      return new THREE.MeshStandardMaterial({
-        color: '#8d877d',
-        roughness: 0.95,
-      });
-    case 'column':
-      return new THREE.MeshStandardMaterial({
-        color: '#5f7d95',
-        metalness: 0.5,
-        roughness: 0.45,
-      });
-    case 'beam':
-      return new THREE.MeshStandardMaterial({
-        color: '#e0a33a',
-        metalness: 0.35,
-        roughness: 0.5,
-      });
-    case 'slab':
-      return new THREE.MeshStandardMaterial({
-        color: '#d2cdc3',
-        roughness: 0.9,
-      });
-    case 'stairs':
-      return new THREE.MeshStandardMaterial({
-        color: '#bdb6aa',
-        roughness: 0.85,
-      });
-    case 'wall:glass':
-      return new THREE.MeshStandardMaterial({
-        color: WALLS.glass.color,
-        metalness: 0.2,
-        roughness: 0.05,
-        transparent: true,
-        opacity: 0.45,
-        depthWrite: false,
-      });
-    default: {
-      const m = key.slice('wall:'.length);
-      const color =
-        m === 'stone'
-          ? WALLS.stone.color
-          : m === 'timber'
-            ? WALLS.timber.color
-            : WALLS.brick.color;
-      return new THREE.MeshStandardMaterial({ color, roughness: 0.85 });
-    }
-  }
-};
-
-const MATERIALS = new Map<string, THREE.MeshStandardMaterial>();
-const materialFor = (key: string): THREE.MeshStandardMaterial => {
-  let m = MATERIALS.get(key);
-  if (!m) {
-    m = makeMaterial(key);
-    MATERIALS.set(key, m);
-  }
-  return m;
-};
+// Freeform building pieces on the 3 m build grid. Each look (see
+// `pieceLooks.ts`) is drawn as one instanced mesh per part.
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 
-const boxMatrix = (b: Box, m: THREE.Matrix4) =>
-  m.compose(
-    new THREE.Vector3(...b.pos),
-    new THREE.Quaternion(),
-    new THREE.Vector3(...b.size)
-  );
-
-/** All pieces that share a look, in one instanced mesh. */
+/** All pieces that share a look, one instanced mesh per part of that look. */
 const PieceGroup = ({
   lookKey,
   pieces,
@@ -98,23 +35,119 @@ const PieceGroup = ({
   lookKey: string;
   pieces: Piece[];
 }) => {
+  const parts = partsFor(lookKey);
+  const matrices = useMemo(() => {
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const one = new THREE.Vector3(1, 1, 1);
+    return pieces.map((p) =>
+      new THREE.Matrix4().compose(
+        new THREE.Vector3(...pieceBox(p).pos),
+        q.clone().setFromAxisAngle(up, turnOf(p)),
+        one
+      )
+    );
+  }, [pieces]);
+  return (
+    <>
+      {parts.map((part, i) => (
+        <PartMesh key={i} part={part} matrices={matrices} />
+      ))}
+    </>
+  );
+};
+
+const PartMesh = ({
+  part,
+  matrices,
+}: {
+  part: Part;
+  matrices: THREE.Matrix4[];
+}) => {
   const mesh = useRef<THREE.InstancedMesh>(null);
-  const boxes = useMemo(() => pieces.flatMap(pieceBoxes), [pieces]);
   useLayoutEffect(() => {
     const el = mesh.current;
     if (!el) return;
-    const m = new THREE.Matrix4();
-    boxes.forEach((b, i) => el.setMatrixAt(i, boxMatrix(b, m)));
+    matrices.forEach((m, i) => el.setMatrixAt(i, m));
     el.instanceMatrix.needsUpdate = true;
     el.computeBoundingSphere();
-  }, [boxes]);
+  }, [matrices]);
   return (
     <instancedMesh
       ref={mesh}
-      args={[UNIT_BOX, materialFor(lookKey), boxes.length]}
-      castShadow={lookKey !== 'wall:glass'}
+      args={[part.geometry, part.material, matrices.length]}
+      castShadow={part.castShadow}
       receiveShadow
     />
+  );
+};
+
+const POST = (() => {
+  const g = new THREE.BoxGeometry(CORNER, CORNER_TOP - CORNER_BOTTOM, CORNER);
+  // Map textures at the same scale as the walls (a wall's UVs span its full length).
+  const uv = g.getAttribute('uv');
+  for (let i = 0; i < uv.count; i++)
+    uv.setX(i, uv.getX(i) * (CORNER / WALL_LEN));
+  uv.needsUpdate = true;
+  return g;
+})();
+
+/**
+ * Where an x-wall and a z-wall meet at a corner with no column, a slim post
+ * fills the notch so the corner looks solid. It takes the x-wall's finish
+ * (glass corners get the aluminium frame color).
+ */
+const CornerPosts = ({ pieces }: { pieces: readonly Piece[] }) => {
+  const groups = useMemo(() => {
+    const columns = new Set<string>();
+    const xWalls = new Map<string, Piece>();
+    const zWalls = new Set<string>();
+    const node = (x: number, z: number, L: number) => `${x},${z},${L}`;
+    for (const p of pieces) {
+      if (p.kind === 'column') columns.add(node(p.x, p.z, p.level));
+      if (p.kind !== 'wall') continue;
+      // The two corners each wall touches.
+      const ends =
+        p.dir === 'x'
+          ? [node(p.x, p.z, p.level), node(p.x + 1, p.z, p.level)]
+          : [node(p.x, p.z, p.level), node(p.x, p.z + 1, p.level)];
+      for (const e of ends) {
+        if (p.dir === 'x') {
+          if (!xWalls.has(e)) xWalls.set(e, p);
+        } else zWalls.add(e);
+      }
+    }
+    const byLook = new Map<string, THREE.Matrix4[]>();
+    for (const [key, wall] of xWalls) {
+      if (!zWalls.has(key) || columns.has(key)) continue;
+      const [x = 0, z = 0, L = 0] = key.split(',').map(Number);
+      const m = new THREE.Matrix4().makeTranslation(
+        x * CELL,
+        PAD_TOP + L * STOREY + (CORNER_TOP + CORNER_BOTTOM) / 2,
+        z * CELL
+      );
+      const look = lookOf(wall);
+      const list = byLook.get(look);
+      if (list) list.push(m);
+      else byLook.set(look, [m]);
+    }
+    return [...byLook.entries()];
+  }, [pieces]);
+  return (
+    <>
+      {groups.map(([look, matrices]) => {
+        const parts = partsFor(look);
+        // Glass walls: use the frame (last part); others: the wall itself.
+        const part = parts[parts.length - 1];
+        return part ? (
+          <PartMesh
+            key={`${look}:${matrices.length}`}
+            part={{ ...part, geometry: POST }}
+            matrices={matrices}
+          />
+        ) : null;
+      })}
+    </>
   );
 };
 
@@ -140,7 +173,7 @@ export const Structure = ({ pieces, pads, pallets, build }: Props) => {
   const groups = useMemo(() => {
     const byLook = new Map<string, Piece[]>();
     for (const p of pieces) {
-      const k = look(p);
+      const k = lookOf(p);
       const list = byLook.get(k);
       if (list) list.push(p);
       else byLook.set(k, [p]);
@@ -153,6 +186,7 @@ export const Structure = ({ pieces, pads, pallets, build }: Props) => {
       {groups.map(([k, list]) => (
         <PieceGroup key={`${k}:${list.length}`} lookKey={k} pieces={list} />
       ))}
+      <CornerPosts pieces={pieces} />
       {pallets.map((q) => (
         <PalletStack key={`${q.kind}:${q.x},${q.z},${q.level}`} pallet={q} />
       ))}
@@ -197,7 +231,12 @@ const LevelGrid = ({
   return (
     <lineSegments
       geometry={geometry}
-      position={[0, PAD_TOP + level * STOREY + 0.04, 0]}
+      // On the pad for the ground floor, on top of the slabs above that.
+      position={[
+        0,
+        PAD_TOP + level * STOREY + (level > 0 ? SLAB_H : 0) + 0.03,
+        0,
+      ]}
     >
       <lineBasicMaterial
         color="#ffffff"

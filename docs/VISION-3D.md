@@ -30,8 +30,8 @@ This document replaces the "pick 1 of 3 daily options" design with a hands-on
      floor slabs, bolting beams, glazing. Anything done by hand.
   2. **Crane operator:** walk to the crane, climb in, slew the jib, move the trolley,
      lower the hook, pick up beams and heavy pieces and set them in place up high.
-  3. **Bulldozer driver:** drive the dozer around the city and push buildings and roads
-     down to grow the site (replaces the demolish menu).
+  3. ~~Bulldozer driver~~: dropped 2026-11-21 (switching vehicles wastes players' time);
+     demolishing stays in the Site work menu.
 - **Ambition:** players should be able to build famous-landmark-style structures (an
   Eiffel-like lattice tower, a Burj-like supertall...), not only boxes. That needs, later:
   many more storeys, diagonal braces / lattice members, setbacks and tapering, and a
@@ -82,7 +82,7 @@ Each stage ends playable in `npm run play` and on Reddit.
    (`TowerState.pallets`, `POST /api/build` op `deliver`). Faster crane, generous pick-up.
    ✅ **Stairs** piece: fills a cell, climbs the way the worker faces, needs an open
    stairwell above; physics are 7 step blocks.
-4. **Bulldozer.** Drivable dozer; pushing into a building or road tile demolishes it.
+4. ~~Bulldozer~~ (dropped 2026-11-21).
 5. **Structural rules.** Weight and capacity per piece; load flows down through supports.
    Unsupported pieces fall, overloaded ones crack, glass shatters. Fall/shatter animations.
 6. **Landmark pieces.** Diagonal braces, taller storey limit, setbacks, spire. Enough to
@@ -91,7 +91,7 @@ Each stage ends playable in `npm run play` and on Reddit.
 8. **Day test and result card**, then **submission polish** (splash, onboarding, mobile QA).
 
 **Cut order if time runs short:** live presence → market budget (free stock) →
-landmark pieces beyond braces → bulldozer (keep the menu).
+landmark pieces beyond braces.
 
 ## Decisions (2026-11-19)
 

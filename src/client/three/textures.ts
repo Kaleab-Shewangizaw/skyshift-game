@@ -117,7 +117,114 @@ export const padTexture = (): THREE.CanvasTexture =>
       ctx.lineTo(250, v);
       ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(90,85,78,0.6)';
-    ctx.lineWidth = 6;
+    // A faint joint where neighboring pads meet.
+    ctx.strokeStyle = 'rgba(90,85,78,0.22)';
+    ctx.lineWidth = 3;
     ctx.strokeRect(3, 3, 250, 250);
+  });
+
+/** Speckled cast concrete. White-ish so the material color can tint it. */
+export const concreteTexture = (): THREE.CanvasTexture =>
+  canvasTexture(256, (ctx) => {
+    ctx.fillStyle = '#e4e1da';
+    ctx.fillRect(0, 0, 256, 256);
+    const rng = makeRng(21);
+    for (let i = 0; i < 2600; i++) {
+      const v = rng();
+      ctx.fillStyle =
+        v < 0.5 ? 'rgba(110,104,96,0.10)' : 'rgba(255,255,255,0.18)';
+      const r = 0.6 + rng() * 1.6;
+      ctx.beginPath();
+      ctx.arc(rng() * 256, rng() * 256, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // A few faint form-work lines.
+    ctx.strokeStyle = 'rgba(120,114,104,0.10)';
+    ctx.lineWidth = 2;
+    for (const y of [64, 128, 192]) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(256, y);
+      ctx.stroke();
+    }
+  });
+
+/** Running-bond brick, one texture repeat ≈ 1 m × 1 m. */
+export const brickTexture = (): THREE.CanvasTexture =>
+  canvasTexture(256, (ctx) => {
+    ctx.fillStyle = '#d9cfc2'; // mortar
+    ctx.fillRect(0, 0, 256, 256);
+    const rng = makeRng(5);
+    const rows = 13;
+    const h = 256 / rows;
+    const w = 256 / 4;
+    for (let r = 0; r < rows; r++) {
+      const offset = r % 2 ? w / 2 : 0;
+      for (let c = -1; c < 5; c++) {
+        const x = c * w + offset;
+        const shade = 0.82 + rng() * 0.3;
+        const red = Math.round(196 * shade);
+        const green = Math.round(98 * shade);
+        const blue = Math.round(72 * shade);
+        ctx.fillStyle = `rgb(${red},${green},${blue})`;
+        ctx.fillRect(x + 2, r * h + 2, w - 4, h - 4);
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(x + 2, r * h + 2, w - 4, 2);
+      }
+    }
+  });
+
+/** Dressed stone blocks in staggered courses. */
+export const stoneTexture = (): THREE.CanvasTexture =>
+  canvasTexture(256, (ctx) => {
+    ctx.fillStyle = '#9c968b';
+    ctx.fillRect(0, 0, 256, 256);
+    const rng = makeRng(9);
+    const rows = 5;
+    const h = 256 / rows;
+    for (let r = 0; r < rows; r++) {
+      let x = r % 2 ? -40 : 0;
+      while (x < 256) {
+        const w = 70 + rng() * 60;
+        const shade = 0.86 + rng() * 0.22;
+        const v = Math.round(196 * shade);
+        ctx.fillStyle = `rgb(${v},${Math.round(v * 0.96)},${Math.round(v * 0.89)})`;
+        ctx.fillRect(x + 3, r * h + 3, w - 6, h - 6);
+        for (let i = 0; i < 40; i++) {
+          ctx.fillStyle =
+            rng() < 0.5 ? 'rgba(80,72,60,0.12)' : 'rgba(255,255,255,0.12)';
+          ctx.fillRect(
+            x + 3 + rng() * (w - 6),
+            r * h + 3 + rng() * (h - 6),
+            2,
+            2
+          );
+        }
+        x += w;
+      }
+    }
+  });
+
+/** Vertical timber boards with grain. */
+export const timberTexture = (): THREE.CanvasTexture =>
+  canvasTexture(256, (ctx) => {
+    const rng = makeRng(13);
+    const boards = 6;
+    const w = 256 / boards;
+    for (let b = 0; b < boards; b++) {
+      const shade = 0.85 + rng() * 0.25;
+      ctx.fillStyle = `rgb(${Math.round(214 * shade)},${Math.round(160 * shade)},${Math.round(104 * shade)})`;
+      ctx.fillRect(b * w, 0, w, 256);
+      ctx.strokeStyle = 'rgba(110,70,35,0.22)';
+      ctx.lineWidth = 1;
+      for (let g = 0; g < 7; g++) {
+        const gx = b * w + 4 + rng() * (w - 8);
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.bezierCurveTo(gx + 4, 80, gx - 4, 170, gx + 2, 256);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(70,40,20,0.45)';
+      ctx.fillRect(b * w, 0, 2, 256);
+    }
   });

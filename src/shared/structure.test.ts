@@ -208,3 +208,154 @@ void test('stairs climb the way you face and need an open stairwell', () => {
     true
   );
 });
+
+void test('slabs rest on any two sides held by beams or other slabs', () => {
+  const pads = withPad().pads;
+  const at = (...ps: PieceSpec[]) => ps.map((p) => ({ ...p, by: 'x', at: 1 }));
+  // Slab (3,0) sits on two beams; the rest of the layout is built around it.
+  const base = at(
+    piece('beam', 3, 0, 0, 'x'),
+    piece('beam', 3, 1, 0, 'x'),
+    piece('slab', 3, 0)
+  );
+  const ok = (pieces: PieceSpec[], p: PieceSpec) =>
+    canPlace(pieces, pads, p).ok;
+
+  // One beam alone: not enough.
+  assert.equal(ok(at(piece('beam', 4, 0, 0, 'x')), piece('slab', 4, 0)), false);
+  // Two beams.
+  assert.equal(
+    ok(
+      at(piece('beam', 4, 0, 0, 'x'), piece('beam', 4, 1, 0, 'x')),
+      piece('slab', 4, 0)
+    ),
+    true
+  );
+  // One beam + one slab: (2,0) has a beam on its top edge and slab (3,0) beside it.
+  assert.equal(
+    ok([...base, ...at(piece('beam', 2, 1, 0, 'x'))], piece('slab', 2, 0)),
+    true
+  );
+  // Two slabs, no beam of its own: (4,0) between slabs (3,0) and (5,0).
+  const twoSlabs = [...base, ...at(piece('slab', 5, 0))];
+  assert.equal(ok(twoSlabs, piece('slab', 4, 0)), true);
+  // Only one slab next to it: not enough.
+  const lone = canPlace(base, pads, piece('slab', 4, 0));
+  assert.ok(!lone.ok && /two supported sides/.test(lone.reason));
+});
+
+void test('a block of slabs cannot hold itself up without any beam', () => {
+  const s = withPad();
+  // 2×2 block with no beams at all: every slab would touch two others.
+  const pieces = [
+    piece('slab', 3, 0),
+    piece('slab', 4, 0),
+    piece('slab', 3, 1),
+  ].map((p) => ({ ...p, by: 'x', at: 1 }));
+  const r = canPlace(pieces, s.pads, piece('slab', 4, 1));
+  assert.ok(!r.ok && /beam/.test(r.reason));
+});
+
+void test('slabs can rest on walls', () => {
+  const pads = withPad().pads;
+  const at = (...ps: PieceSpec[]) => ps.map((p) => ({ ...p, by: 'x', at: 1 }));
+  // A room of two brick walls holds a roof slab with no beams at all.
+  const room = at(
+    piece('wall', 3, 0, 0, 'x', 'brick'),
+    piece('wall', 3, 1, 0, 'x', 'brick')
+  );
+  assert.equal(canPlace(room, pads, piece('slab', 3, 0)).ok, true);
+  // Next door, (4,0) shares a wall with slab (3,0): the wall counts once, so one side.
+  const next = [
+    ...room,
+    ...at(piece('slab', 3, 0), piece('wall', 4, 0, 0, 'z', 'stone')),
+  ];
+  assert.equal(canPlace(next, pads, piece('slab', 4, 0)).ok, false);
+  // Add a glass wall on its far side: two walls hold it.
+  const twoWalls = [...next, ...at(piece('wall', 4, 1, 0, 'x', 'glass'))];
+  assert.equal(canPlace(twoWalls, pads, piece('slab', 4, 0)).ok, true);
+  // A lone wall is one side only.
+  const one = canPlace(
+    at(piece('wall', 6, 0, 0, 'x', 'brick')),
+    pads,
+    piece('slab', 5, 0)
+  );
+  assert.equal(one.ok, false);
+});
+
+void test('upper walls can stand on the wall below', () => {
+  const pads = withPad().pads;
+  const below = [{ ...piece('wall', 3, 0, 0, 'x', 'stone'), by: 'x', at: 1 }];
+  assert.equal(
+    canPlace(below, pads, piece('wall', 3, 0, 1, 'x', 'brick')).ok,
+    true
+  );
+  assert.equal(
+    canPlace(below, pads, piece('wall', 4, 0, 1, 'x', 'brick')).ok,
+    false
+  );
+});
+
+void test('upper columns stand on any floor, not only on a column', () => {
+  const pads = ['1,0', '2,0'];
+  const at = (...ps: PieceSpec[]) => ps.map((p) => ({ ...p, by: 'x', at: 1 }));
+  const floor = at(piece('slab', 3, 0, 0));
+  // On a slab: corner (4,1) is a corner of slab (3,0).
+  assert.equal(canPlace(floor, pads, piece('column', 4, 1, 1)).ok, true);
+  // On a beam or a wall below.
+  assert.equal(
+    canPlace(at(piece('beam', 6, 0, 0, 'x')), pads, piece('column', 7, 0, 1))
+      .ok,
+    true
+  );
+  assert.equal(
+    canPlace(
+      at(piece('wall', 6, 0, 0, 'z', 'brick')),
+      pads,
+      piece('column', 6, 0, 1)
+    ).ok,
+    true
+  );
+  // Nothing below: no.
+  const air = canPlace([], pads, piece('column', 4, 1, 1));
+  assert.ok(!air.ok && /floor under it/.test(air.reason));
+});
+
+void test('beams bolt end to end into long lines that rest on a column somewhere', () => {
+  const pads = ['1,0', '2,0', '3,0'];
+  const at = (...ps: PieceSpec[]) => ps.map((p) => ({ ...p, by: 'x', at: 1 }));
+  // One column at the start, then a bridge of beams marching along +x.
+  let pieces = at(piece('foundation', 3, 0), piece('column', 3, 0));
+  for (let x = 3; x < 9; x++) {
+    const b = piece('beam', x, 0, 0, 'x');
+    const r = canPlace(pieces, pads, b);
+    assert.ok(r.ok, `beam ${x}: ${r.ok ? '' : r.reason}`);
+    pieces = [...pieces, ...at(b)];
+  }
+  // And around a corner.
+  assert.equal(canPlace(pieces, pads, piece('beam', 9, 0, 0, 'z')).ok, true);
+  // A beam sitting on a wall needs no column.
+  assert.equal(
+    canPlace(
+      at(piece('wall', 12, 0, 0, 'x', 'stone')),
+      pads,
+      piece('beam', 12, 0, 0, 'x')
+    ).ok,
+    true
+  );
+  // Beams bolted only to each other, far from any column or wall: no.
+  const floating = at(piece('beam', 20, 0, 0, 'x'));
+  const r = canPlace(floating, ['5,0'], piece('beam', 21, 0, 0, 'x'));
+  assert.ok(!r.ok && /column or wall somewhere/.test(r.reason));
+  // The start column now carries the whole bridge, so it can't be taken down.
+  const all = pieces.map((p) => ({ ...p, by: 'ana' }));
+  assert.ok(
+    'error' in
+      applyRemove(
+        { ...emptyTower(), pads, pieces: all },
+        slotKey(piece('column', 3, 0)),
+        'ana',
+        9
+      )
+  );
+});

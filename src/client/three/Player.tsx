@@ -1,5 +1,5 @@
 import { useFrame, useThree } from '@react-three/fiber';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
@@ -59,11 +59,13 @@ export const Player = ({
     climbing: false,
   });
   const group = useRef<THREE.Group>(null);
-  const legL = useRef<THREE.Mesh>(null);
-  const legR = useRef<THREE.Mesh>(null);
-  const armL = useRef<THREE.Mesh>(null);
-  const armR = useRef<THREE.Mesh>(null);
+  const legL = useRef<THREE.Group>(null);
+  const legR = useRef<THREE.Group>(null);
+  const armL = useRef<THREE.Group>(null);
+  const armR = useRef<THREE.Group>(null);
+  const torso = useRef<THREE.Group>(null);
   const walkPhase = useRef(0);
+  const stride = useRef(0);
   const lastAim = useRef('');
   const nearCrane = useRef(false);
 
@@ -128,6 +130,9 @@ export const Player = ({
 
       const moving = Math.hypot(b.x - px, b.z - pz) / dt;
       walkPhase.current += dt * (b.climbing ? 9 : moving * 2.2);
+      // Ease the stride in and out so starting and stopping look natural.
+      const want = b.climbing || moving > 0.3 ? 1 : 0;
+      stride.current += (want - stride.current) * Math.min(1, dt * 10);
     }
 
     const g = group.current;
@@ -138,13 +143,20 @@ export const Player = ({
       d = Math.atan2(Math.sin(d), Math.cos(d));
       g.rotation.y += d * Math.min(1, dt * 12);
     }
-    const swing = Math.sin(walkPhase.current) * 0.7;
+    const k = stride.current;
+    const swing = Math.sin(walkPhase.current) * 0.75 * k;
     if (legL.current) legL.current.rotation.x = swing;
     if (legR.current) legR.current.rotation.x = -swing;
     if (armL.current)
-      armL.current.rotation.x = b.climbing ? -2.6 + swing : -swing;
+      armL.current.rotation.x = b.climbing ? -2.6 + swing : -swing * 0.8;
     if (armR.current)
-      armR.current.rotation.x = b.climbing ? -2.6 - swing : swing;
+      armR.current.rotation.x = b.climbing ? -2.6 - swing : swing * 0.8;
+    if (torso.current) {
+      // A little bounce and forward lean while walking.
+      torso.current.position.y =
+        Math.abs(Math.cos(walkPhase.current)) * 0.05 * k;
+      torso.current.rotation.x = 0.08 * k;
+    }
 
     const near =
       Math.hypot(b.x - CRANE_POS[0], b.z - CRANE_POS[1]) < 4.5 && b.y < 2;
@@ -172,63 +184,126 @@ export const Player = ({
 
   return (
     <group ref={group} visible={visible}>
-      {/* legs pivot at the hip */}
-      <group position={[0, 0.85, 0]}>
-        <mesh ref={legL} position={[-0.15, 0, 0]} castShadow>
-          <boxGeometry args={[0.22, 0.85, 0.24]} />
-          <meshStandardMaterial color="#2f4b7c" />
-        </mesh>
-        <mesh ref={legR} position={[0.15, 0, 0]} castShadow>
-          <boxGeometry args={[0.22, 0.85, 0.24]} />
-          <meshStandardMaterial color="#2f4b7c" />
-        </mesh>
-      </group>
-      {/* torso in a hi-vis vest */}
-      <mesh position={[0, 1.18, 0]} castShadow>
-        <boxGeometry args={[0.56, 0.68, 0.32]} />
-        <meshStandardMaterial color="#ff8a1f" />
-      </mesh>
-      <mesh position={[0, 1.18, 0.165]}>
-        <boxGeometry args={[0.5, 0.08, 0.01]} />
-        <meshStandardMaterial
-          color="#e8ff6a"
-          emissive="#c8e04a"
-          emissiveIntensity={0.4}
-        />
-      </mesh>
-      <group position={[0, 1.45, 0]}>
-        <mesh ref={armL} position={[-0.36, -0.3, 0]} castShadow>
-          <boxGeometry args={[0.16, 0.6, 0.18]} />
-          <meshStandardMaterial color="#ff8a1f" />
-        </mesh>
-        <mesh ref={armR} position={[0.36, -0.3, 0]} castShadow>
-          <boxGeometry args={[0.16, 0.6, 0.18]} />
-          <meshStandardMaterial color="#ff8a1f" />
-        </mesh>
-      </group>
-      <mesh position={[0, 1.72, 0]} castShadow>
-        <sphereGeometry args={[0.2, 16, 12]} />
-        <meshStandardMaterial color="#f1c27d" />
-      </mesh>
-      {/* hard hat with a brim */}
-      <mesh position={[0, 1.84, 0]} castShadow>
-        <sphereGeometry args={[0.23, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color="#ffd23f" />
-      </mesh>
-      <mesh position={[0, 1.84, 0.06]}>
-        <cylinderGeometry args={[0.27, 0.27, 0.03, 16]} />
-        <meshStandardMaterial color="#ffd23f" />
-      </mesh>
+      <WorkerModel
+        legL={legL}
+        legR={legR}
+        armL={armL}
+        armR={armR}
+        torso={torso}
+      />
       {/* a soft ring under the feet so the worker is easy to spot */}
       <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.45, 0.6, 24]} />
+        <ringGeometry args={[0.45, 0.6, 32]} />
         <meshBasicMaterial
           color="#ffd23f"
           transparent
-          opacity={0.8}
+          opacity={0.7}
           depthWrite={false}
         />
       </mesh>
     </group>
   );
 };
+
+const SKIN = '#f1c27d';
+const VEST = '#ff8a1f';
+const STRIPE = '#e8ff6a';
+const JEANS = '#2f4b7c';
+const BOOT = '#4a3423';
+const HAT = '#ffd23f';
+
+type ModelRefs = {
+  legL: RefObject<THREE.Group | null>;
+  legR: RefObject<THREE.Group | null>;
+  armL: RefObject<THREE.Group | null>;
+  armR: RefObject<THREE.Group | null>;
+  torso: RefObject<THREE.Group | null>;
+};
+
+/** A rounded, toy-like construction worker. Limbs pivot at hips and shoulders. */
+const WorkerModel = ({ legL, legR, armL, armR, torso }: ModelRefs) => (
+  <group>
+    {[legL, legR].map((ref, i) => (
+      <group key={i} ref={ref} position={[i === 0 ? -0.12 : 0.12, 0.92, 0]}>
+        <mesh position={[0, -0.41, 0]} castShadow>
+          <capsuleGeometry args={[0.1, 0.62, 6, 12]} />
+          <meshStandardMaterial color={JEANS} roughness={0.8} />
+        </mesh>
+        <mesh position={[0, -0.86, 0.05]} castShadow>
+          <boxGeometry args={[0.2, 0.13, 0.32]} />
+          <meshStandardMaterial color={BOOT} roughness={0.7} />
+        </mesh>
+      </group>
+    ))}
+    <group ref={torso}>
+      <mesh position={[0, 0.97, 0]}>
+        <cylinderGeometry args={[0.215, 0.215, 0.07, 20]} />
+        <meshStandardMaterial color="#5a3b22" />
+      </mesh>
+      <mesh position={[0, 1.25, 0]} castShadow>
+        <capsuleGeometry args={[0.23, 0.22, 8, 20]} />
+        <meshStandardMaterial color={VEST} roughness={0.6} />
+      </mesh>
+      {[1.15, 1.33].map((y) => (
+        <mesh key={y} position={[0, y, 0]}>
+          <cylinderGeometry args={[0.236, 0.236, 0.05, 24, 1, true]} />
+          <meshStandardMaterial
+            color={STRIPE}
+            emissive="#c8e04a"
+            emissiveIntensity={0.35}
+          />
+        </mesh>
+      ))}
+      {[armL, armR].map((ref, i) => (
+        <group
+          key={i}
+          ref={ref}
+          position={[i === 0 ? -0.3 : 0.3, 1.48, 0]}
+          rotation={[0, 0, i === 0 ? 0.12 : -0.12]}
+        >
+          <mesh position={[0, -0.26, 0]} castShadow>
+            <capsuleGeometry args={[0.075, 0.38, 6, 12]} />
+            <meshStandardMaterial color={VEST} roughness={0.6} />
+          </mesh>
+          <mesh position={[0, -0.56, 0]} castShadow>
+            <sphereGeometry args={[0.085, 14, 10]} />
+            <meshStandardMaterial color={SKIN} />
+          </mesh>
+        </group>
+      ))}
+      <mesh position={[0, 1.6, 0]}>
+        <cylinderGeometry args={[0.07, 0.08, 0.12, 12]} />
+        <meshStandardMaterial color={SKIN} />
+      </mesh>
+      <mesh position={[0, 1.78, 0]} castShadow>
+        <sphereGeometry args={[0.2, 24, 18]} />
+        <meshStandardMaterial color={SKIN} roughness={0.7} />
+      </mesh>
+      {[-0.07, 0.07].map((x) => (
+        <mesh key={x} position={[x, 1.8, 0.178]}>
+          <sphereGeometry args={[0.028, 10, 8]} />
+          <meshStandardMaterial color="#2a1d14" />
+        </mesh>
+      ))}
+      <mesh position={[0, 1.75, 0.2]}>
+        <sphereGeometry args={[0.03, 10, 8]} />
+        <meshStandardMaterial color="#e3a96b" />
+      </mesh>
+      {/* hard hat: dome, brim and a center ridge */}
+      <mesh position={[0, 1.83, 0]} castShadow>
+        <sphereGeometry
+          args={[0.225, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2]}
+        />
+        <meshStandardMaterial color={HAT} roughness={0.35} />
+      </mesh>
+      <mesh position={[0, 1.835, 0.04]}>
+        <cylinderGeometry args={[0.28, 0.28, 0.025, 28]} />
+        <meshStandardMaterial color={HAT} roughness={0.35} />
+      </mesh>
+      <mesh position={[0, 2.02, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <torusGeometry args={[0.035, 0.022, 6, 12]} />
+        <meshStandardMaterial color={HAT} roughness={0.35} />
+      </mesh>
+    </group>
+  </group>
+);

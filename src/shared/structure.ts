@@ -18,7 +18,8 @@ import { isPad, padTiles } from './city.ts';
 // each beam or column built on that floor uses one from a pallet there.
 
 export const CELL = 3;
-export const STOREY = 3;
+/** Storey height (m): walls and columns are this tall. */
+export const STOREY = 4;
 export const MAX_LEVEL = 11;
 export const MAX_PIECES = 800;
 
@@ -64,21 +65,21 @@ export const PIECES: Record<PieceKind, PieceInfo> = {
   column: {
     name: 'Column',
     icon: '🏛️',
-    hint: 'Stands on a grid corner next to a foundation, or on a column below.',
+    hint: 'Stands on a grid corner: next to a footing on the ground, or on any floor above.',
     weight: 1,
     capacity: 30,
   },
   beam: {
     name: 'Beam',
     icon: '➖',
-    hint: 'Spans a grid edge at the top of the floor. Needs a column at one end.',
+    hint: 'Spans a grid edge at the top of the floor. Rests on a column or wall, or bolts onto another beam.',
     weight: 1,
     capacity: 12,
   },
   slab: {
     name: 'Floor slab',
     icon: '⬜',
-    hint: 'Fills a cell at the top of the floor. Needs beams on two sides.',
+    hint: 'Fills a cell at the top of the floor. Needs two sides held by beams, walls or other slabs.',
     weight: 3,
     capacity: 8,
   },
@@ -246,39 +247,167 @@ const supportProblem = (idx: Index, p: PieceSpec): string | null => {
         )
           ? null
           : 'A ground-floor column needs a foundation next to it.';
-      return has(idx, spec('column', p.x, p.z, L - 1))
+      // Upper columns stand on whatever floor is below: no need to stack columns.
+      return has(idx, spec('column', p.x, p.z, L - 1)) ||
+        nodeEdges(p.x, p.z).some(
+          ([x, z, dir]) =>
+            has(idx, spec('beam', x, z, L - 1, dir)) ||
+            has(idx, spec('wall', x, z, L - 1, dir))
+        ) ||
+        touchingCells(p).some(([x, z]) => has(idx, spec('slab', x, z, L - 1)))
         ? null
-        : 'A column needs a column right below it.';
-    case 'beam': {
-      const [ax, az, bx, bz] =
-        p.dir === 'x' ? [p.x, p.z, p.x + 1, p.z] : [p.x, p.z, p.x, p.z + 1];
-      return has(idx, spec('column', ax, az, L)) ||
-        has(idx, spec('column', bx, bz, L))
+        : 'A column needs a floor under it: a slab, beam, wall or column.';
+    case 'beam':
+      if (beamHeld(idx, p.x, p.z, p.dir, L)) return null;
+      if (!beamEnds(p).some(([x, z]) => nodeHasBeam(idx, x, z, L)))
+        return 'A beam needs a column or wall under it, or another beam to bolt onto.';
+      return reachesColumn(idx, p, L)
         ? null
-        : 'A beam needs a column at one end on this floor.';
-    }
+        : 'This line of beams needs a column or wall somewhere to rest on.';
     case 'slab': {
-      const edges = [
-        spec('beam', p.x, p.z, L, 'x'),
-        spec('beam', p.x, p.z + 1, L, 'x'),
-        spec('beam', p.x, p.z, L, 'z'),
-        spec('beam', p.x + 1, p.z, L, 'z'),
-      ];
-      return edges.filter((e) => has(idx, e)).length >= 2
+      const sides = slabSides(idx, p.x, p.z, L);
+      if (sides.filter((s) => s !== 'open').length < 2)
+        return 'A floor slab needs two supported sides: beams, walls or other slabs.';
+      return sides.some(holdsUp) || reachesSupport(idx, p.x, p.z, L)
         ? null
-        : 'A floor slab needs beams on at least two of its sides.';
+        : 'These slabs need to rest on at least one beam or wall somewhere.';
     }
     case 'wall':
       if (L === 0) return null;
       return has(idx, spec('beam', p.x, p.z, L - 1, p.dir)) ||
+        has(idx, spec('wall', p.x, p.z, L - 1, p.dir)) ||
         touchingCells(p).some(([x, z]) => has(idx, spec('slab', x, z, L - 1)))
         ? null
-        : 'An upper wall needs a beam or floor slab under it.';
+        : 'An upper wall needs a wall, beam or floor slab under it.';
     case 'stairs':
       return L === 0 || has(idx, spec('slab', p.x, p.z, L - 1))
         ? null
         : 'Upper stairs need a floor slab under them.';
   }
+};
+
+/** The two corners a beam or wall edge runs between. */
+const beamEnds = (p: PieceSpec): [number, number][] =>
+  p.dir === 'x'
+    ? [
+        [p.x, p.z],
+        [p.x + 1, p.z],
+      ]
+    : [
+        [p.x, p.z],
+        [p.x, p.z + 1],
+      ];
+
+/** The four edges that meet at corner (x, z). */
+const nodeEdges = (x: number, z: number): [number, number, Dir][] => [
+  [x, z, 'x'],
+  [x - 1, z, 'x'],
+  [x, z, 'z'],
+  [x, z - 1, 'z'],
+];
+
+const nodeHasBeam = (idx: Index, x: number, z: number, L: number) =>
+  nodeEdges(x, z).some(([ex, ez, dir]) =>
+    has(idx, spec('beam', ex, ez, L, dir))
+  );
+
+/** Is this beam held directly: a column at either end, or a wall right under it? */
+const beamHeld = (
+  idx: Index,
+  x: number,
+  z: number,
+  dir: Dir | null,
+  L: number
+): boolean => {
+  const b = spec('beam', x, z, L, dir);
+  return (
+    has(idx, spec('wall', x, z, L, dir)) ||
+    beamEnds(b).some(([nx, nz]) => has(idx, spec('column', nx, nz, L)))
+  );
+};
+
+/**
+ * Do the beams bolted to `p` (end to end, through shared corners) reach a
+ * column or wall anywhere? Without this, a chain of beams could float.
+ */
+const reachesColumn = (idx: Index, p: PieceSpec, L: number): boolean => {
+  const seen = new Set<string>();
+  const queue: PieceSpec[] = [p];
+  while (queue.length > 0 && seen.size < 400) {
+    const b = queue.shift();
+    if (!b) break;
+    const key = slotKey(b);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (b !== p && beamHeld(idx, b.x, b.z, b.dir, L)) return true;
+    for (const [nx, nz] of beamEnds(b)) {
+      if (has(idx, spec('column', nx, nz, L))) return true;
+      for (const [ex, ez, dir] of nodeEdges(nx, nz)) {
+        const next = spec('beam', ex, ez, L, dir);
+        if (has(idx, next) && !seen.has(slotKey(next))) queue.push(next);
+      }
+    }
+  }
+  return false;
+};
+
+type Side = 'beam' | 'wall' | 'slab' | 'open';
+
+/** Beams and walls carry a slab down to the ground; a neighboring slab only shares the load. */
+const holdsUp = (s: Side) => s === 'beam' || s === 'wall';
+
+/**
+ * What holds each of a slab cell's four sides: a beam on that edge, a wall
+ * under it (walls fill the storey up to the slab), a slab next door, or nothing.
+ */
+const slabSides = (idx: Index, x: number, z: number, L: number): Side[] =>
+  (
+    [
+      [x, z, 'x', x, z - 1],
+      [x, z + 1, 'x', x, z + 1],
+      [x, z, 'z', x - 1, z],
+      [x + 1, z, 'z', x + 1, z],
+    ] satisfies [number, number, Dir, number, number][]
+  ).map(([ex, ez, dir, nx, nz]) =>
+    has(idx, spec('beam', ex, ez, L, dir))
+      ? 'beam'
+      : has(idx, spec('wall', ex, ez, L, dir))
+        ? 'wall'
+        : has(idx, spec('slab', nx, nz, L))
+          ? 'slab'
+          : 'open'
+  );
+
+/**
+ * Do the slabs joined to cell (x, z) on storey L rest on a beam or wall
+ * anywhere? Without this, a block of slabs could hold itself up in mid-air.
+ */
+const reachesSupport = (
+  idx: Index,
+  x: number,
+  z: number,
+  L: number
+): boolean => {
+  const seen = new Set<string>();
+  const queue: [number, number][] = [[x, z]];
+  while (queue.length > 0 && seen.size < 400) {
+    const [cx, cz] = queue.shift() ?? [x, z];
+    const key = `${cx},${cz}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const sides = slabSides(idx, cx, cz, L);
+    if (sides.some(holdsUp)) return true;
+    const next: [number, number][] = [
+      [cx, cz - 1],
+      [cx, cz + 1],
+      [cx - 1, cz],
+      [cx + 1, cz],
+    ];
+    next.forEach((n, i) => {
+      if (sides[i] === 'slab') queue.push(n);
+    });
+  }
+  return false;
 };
 
 // ---------- Steel pallets ----------

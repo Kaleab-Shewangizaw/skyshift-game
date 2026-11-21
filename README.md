@@ -50,13 +50,14 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
 
 ## Building rules
 
-- The site has a 3 m grid (4×4 cells per 12 m tile) and 3 m storeys. Only poured pads
+- The site has a 3 m grid (4×4 cells per 12 m tile) and 4 m storeys. Only poured pads
   are buildable; the center tile starts with one.
 - **Steel**: on floors 1 and 2 the worker carries beams and columns by hand. From floor 3
   up, each beam or column uses one from a crane-delivered pallet on that floor; the HUD shows
   how many are left.
-- **Footing** (ground floor only) → **Column** on a corner next to a footing, or on a
-  column below → **Beam** with a column at one end → **Slab** with beams on two sides →
+- **Footing** (ground floor only) → **Column** on a corner next to a footing, or on any
+  slab, beam, wall or column below → **Beam** on a column or wall, or bolted end to end
+  onto another beam (a line of beams must touch a column or wall somewhere) → **Slab** with two supported sides (beams, walls or neighboring slabs; the group must rest on a beam or wall somewhere) →
   **Wall** on the ground, or on a beam or slab below.
 - You can take down your own pieces when nothing rests on them. Building is unlimited.
 - Rules are pure functions in `src/shared/structure.ts`, shared by client and server.

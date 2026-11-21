@@ -74,10 +74,12 @@ export const City3D = (p: City3DProps) => {
   );
   return (
     <Canvas
-      shadows
+      shadows="soft"
       dpr={[1, 1.75]}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
-      camera={{ fov: FOV, near: 0.3, far: 1500, position: [0, 8, 14] }}
+      // A near plane at 0.6 m (not 0.3) gives the depth buffer 2× the precision,
+      // which keeps distant faces from shimmering through each other.
+      camera={{ fov: FOV, near: 0.6, far: 1500, position: [0, 8, 14] }}
       style={{ touchAction: 'none' }}
     >
       <Sky

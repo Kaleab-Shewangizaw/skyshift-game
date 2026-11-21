@@ -686,7 +686,8 @@ const Rubble = ({ tiles }: { tiles: [number, number][] }) => {
   );
 };
 
-const PAD_SIZE = TILE - 0.5;
+/** Pads fill their tile, so neighboring pads join into one level floor. */
+const PAD_SIZE = TILE;
 const PAD_HEIGHT = PAD_TOP;
 const padGeometry = new THREE.BoxGeometry(PAD_SIZE, PAD_HEIGHT, PAD_SIZE);
 let padMaterial: THREE.MeshStandardMaterial | null = null;
@@ -708,26 +709,6 @@ const Pad = ({ x, z }: { x: number; z: number }) => (
       material={getPadMaterial()}
       receiveShadow
     />
-    {/* rebar stubs at the corners, ready for columns */}
-    {[
-      [-1, -1],
-      [1, -1],
-      [-1, 1],
-      [1, 1],
-    ].map(([dx = 0, dz = 0]) => (
-      <mesh
-        key={`${dx},${dz}`}
-        position={[
-          dx * (PAD_SIZE / 2 - 0.7),
-          PAD_HEIGHT + 0.5,
-          dz * (PAD_SIZE / 2 - 0.7),
-        ]}
-        castShadow
-      >
-        <cylinderGeometry args={[0.07, 0.07, 1, 6]} />
-        <meshStandardMaterial color="#8b5a3c" metalness={0.4} roughness={0.6} />
-      </mesh>
-    ))}
   </group>
 );
 
