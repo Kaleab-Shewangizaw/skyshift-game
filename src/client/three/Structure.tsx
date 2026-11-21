@@ -50,9 +50,11 @@ const PieceGroup = ({
 const PartMesh = ({
   part,
   matrices,
+  receive = true,
 }: {
   part: Part;
   matrices: THREE.Matrix4[];
+  receive?: boolean;
 }) => {
   const mesh = useRef<THREE.InstancedMesh>(null);
   useLayoutEffect(() => {
@@ -67,7 +69,7 @@ const PartMesh = ({
       ref={mesh}
       args={[part.geometry, part.material, matrices.length]}
       castShadow={part.castShadow}
-      receiveShadow
+      receiveShadow={receive}
     />
   );
 };
@@ -141,6 +143,43 @@ const CornerPosts = ({ pieces }: { pieces: readonly Piece[] }) => {
   );
 };
 
+/** Pale blue "hologram" for planned pieces: visible, but clearly not built. */
+const PLAN_MATERIAL = new THREE.MeshBasicMaterial({
+  color: '#7fd8ff',
+  transparent: true,
+  opacity: 0.22,
+  depthWrite: false,
+});
+
+/** The rest of today's blueprint, drawn with the real piece shapes in see-through blue. */
+const PlanGhosts = ({ plan }: { plan: readonly PieceSpec[] }) => {
+  const groups = useMemo(() => {
+    const byLook = new Map<string, THREE.Matrix4[]>();
+    for (const p of plan) {
+      const k = lookOf(p);
+      const m = pieceTransform(p);
+      const list = byLook.get(k);
+      if (list) list.push(m);
+      else byLook.set(k, [m]);
+    }
+    return [...byLook.entries()];
+  }, [plan]);
+  return (
+    <>
+      {groups.map(([look, matrices]) =>
+        partsFor(look).map((part, i) => (
+          <PartMesh
+            key={`${look}:${i}:${matrices.length}`}
+            part={{ ...part, material: PLAN_MATERIAL, castShadow: false }}
+            matrices={matrices}
+            receive={false}
+          />
+        ))
+      )}
+    </>
+  );
+};
+
 /** What the worker is aiming at: a free spot, a blocked one, or one of their own pieces. */
 export type GhostState = 'ok' | 'bad' | 'remove';
 
@@ -154,12 +193,14 @@ export type BuildView = {
 
 type Props = {
   pieces: readonly Piece[];
+  /** Blueprint pieces nobody has built yet, shown as a see-through plan. */
+  plan: readonly PieceSpec[];
   pads: readonly string[];
   pallets: readonly Pallet[];
   build: BuildView | null;
 };
 
-export const Structure = ({ pieces, pads, pallets, build }: Props) => {
+export const Structure = ({ pieces, plan, pads, pallets, build }: Props) => {
   const groups = useMemo(() => {
     const byLook = new Map<string, Piece[]>();
     for (const p of pieces) {
@@ -177,6 +218,7 @@ export const Structure = ({ pieces, pads, pallets, build }: Props) => {
         <PieceGroup key={`${k}:${list.length}`} lookKey={k} pieces={list} />
       ))}
       <CornerPosts pieces={pieces} />
+      <PlanGhosts plan={plan} />
       {pallets.map((q) => (
         <PalletStack key={`${q.kind}:${q.x},${q.z},${q.level}`} pallet={q} />
       ))}

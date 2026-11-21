@@ -29,6 +29,8 @@ export type City3DProps = {
   kind: PieceKind;
   material: WallMaterial;
   onAim: (spec: PieceSpec, level: number) => void;
+  /** Blueprint pieces still to build, drawn as a see-through plan. */
+  plan: readonly PieceSpec[];
   /** Grid and ghost around the worker or under the hook (null in site overview). */
   build: BuildView | null;
   /** The worker is up in the crane cab. */
@@ -105,6 +107,7 @@ export const City3D = (p: City3DProps) => {
         pieces={pieces}
         pads={pads}
         pallets={p.tower.pallets}
+        plan={p.plan}
         build={p.build}
       />
       <Crane

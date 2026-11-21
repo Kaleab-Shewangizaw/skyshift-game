@@ -14,6 +14,7 @@ import {
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
+import { dayStart } from '../../shared/blueprints';
 import { parseContributionJson, parseTowerJson } from '../../shared/validate';
 
 // Redis layout (one round = one post on one UTC day):
@@ -73,7 +74,8 @@ export const loadState = async (
       ? redis.hGet(shiftsKey(postId, dateKey), userId)
       : Promise.resolve(undefined),
   ]);
-  const tower = parseTowerJson(rawTower);
+  // Nobody has worked today yet: start from today's blueprint site.
+  const tower = rawTower ? parseTowerJson(rawTower) : dayStart(dateKey);
   if (!tower)
     throw new CorruptTowerError(
       `Unreadable tower at ${towerKey(postId, dateKey)}`
@@ -106,7 +108,7 @@ const editTower = async (
       redis.get(tk),
       redis.hGet(sk, p.userId),
     ]);
-    const tower = parseTowerJson(rawTower);
+    const tower = rawTower ? parseTowerJson(rawTower) : dayStart(p.dateKey);
     if (!tower) {
       await txn.unwatch();
       throw new CorruptTowerError(`Unreadable tower at ${tk}`);

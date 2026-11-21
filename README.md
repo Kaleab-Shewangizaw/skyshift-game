@@ -7,6 +7,15 @@ beams, floor slabs and walls (brick, stone, glass, timber), and climb what you b
 Climb into the tower crane to lift steel into place. The bulldozer is next (see
 `docs/VISION-3D.md`).
 
+## Today's build
+
+Every UTC day the post gets one **blueprint** (a cottage, a glass pavilion, a two-storey
+house, a braced watchtower...), picked by date from `src/shared/blueprints.ts`. The pieces
+still to build glow as a see-through blue plan, the card at the top shows progress, and the
+info line tells you when the spot you aim at is "✓ on the plan" (or which material the plan
+wants). The day's site starts with pads already poured under the blueprint. In local play
+mode, **📋 copy blueprint** copies whatever is built as blueprint data, for authoring levels.
+
 ## Controls
 
 - **Walk**: on-screen joystick, or WASD / arrow keys. **Jump**: ⤒ button or Space.

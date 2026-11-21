@@ -106,7 +106,12 @@ Each stage ends playable in `npm run play` and on Reddit.
    Unsupported pieces fall, overloaded ones crack, glass shatters. Fall/shatter animations.
 6. ✅ **Landmark pieces** (done 2026-11-21): leaning columns (8 directions), cross braces,
    arches, spires; 48 storeys and 2,500 pieces. Lean/brace/arch use pallet steel above
-   floor 2. Next: blueprints + the daily challenge.
+   floor 2.
+   ✅ **Blueprints + daily challenge** (done 2026-11-21, `src/shared/blueprints.ts`):
+   generator blueprints (cottage, pavilion, house, watchtower), date-seeded daily pick,
+   see-through plan, progress card, completion cheer, pads pre-poured, dev copy tool;
+   a test builds every blueprint under the rules. Still to do: finished dailies joining
+   the skyline (with plots, step 3).
 7. **Market and stockpile, live presence** (other workers appear via realtime).
 8. **Day test and result card**, then **submission polish** (splash, onboarding, mobile QA).
 

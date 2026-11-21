@@ -9,13 +9,13 @@ import {
   utcDateKey,
   type Challenge,
 } from '../../shared/challenge';
+import { dayStart } from '../../shared/blueprints';
 import {
   applyDeliver,
   applyPlace,
   applyRemove,
   applyReturn,
   applySiteWork,
-  emptyTower,
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
@@ -163,7 +163,7 @@ export const createLocalService = (username = 'you') => {
   const dateKey = utcDateKey();
   const challenge = makeChallenge(dateKey);
   const key = `skyshift:local:${dateKey}`;
-  let tower: TowerState = read(key) ?? emptyTower();
+  let tower: TowerState = read(key) ?? dayStart(dateKey);
 
   const view = (): GameView => ({ dateKey, challenge, tower, username });
   const apply = (r: { state: TowerState } | { error: string }): SiteResult => {
@@ -193,7 +193,7 @@ export const createLocalService = (username = 'you') => {
       );
     },
     reset() {
-      tower = emptyTower();
+      tower = dayStart(dateKey);
       write(key, tower);
       return view();
     },

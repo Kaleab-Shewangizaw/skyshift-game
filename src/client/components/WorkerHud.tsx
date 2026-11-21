@@ -33,6 +33,8 @@ type Props = {
   setMaterial: (m: WallMaterial) => void;
   /** Steel left on this floor (null on floors 1–2, where it's carried by hand). */
   steelLeft: number | null;
+  /** How the aimed spot relates to today's blueprint, if it's part of it. */
+  planNote: string | null;
   /** The spot in front of the worker, and whether it can be built on. */
   aim: {
     spec: PieceSpec;
@@ -75,6 +77,16 @@ export const WorkerHud = (p: Props) => {
                 <>Build {describePiece(a.spec)}</>
               )}
             </>
+          )}
+          {p.planNote && (
+            <span
+              className={
+                p.planNote.startsWith('✓') ? 'text-[#1f7a35]' : 'text-[#b86b00]'
+              }
+            >
+              {' · '}
+              {p.planNote}
+            </span>
           )}
           {p.steelLeft !== null && (
             <span className={p.steelLeft > 0 ? '' : 'text-[#a1281b]'}>

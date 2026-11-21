@@ -13,6 +13,7 @@ import {
   useState,
 } from 'react';
 import { createRoot } from 'react-dom/client';
+import { dailyBlueprint, planAt, progressOf } from '../shared/blueprints';
 import { roundEndsAt } from '../shared/challenge';
 import {
   MAX_SITE_TILES,
@@ -32,6 +33,7 @@ import {
   canDeliver,
   canPlace,
   canRemove,
+  describePiece,
   deliveryTarget,
   steelOf,
   slotKey,
@@ -41,6 +43,7 @@ import {
   type PieceSpec,
   type WallMaterial,
 } from '../shared/structure';
+import { PlanCard } from './components/PlanCard';
 import { SitePanel } from './components/SitePanel';
 import { WorkerHud } from './components/WorkerHud';
 import { CraneHud } from './components/CraneHud';
@@ -173,6 +176,27 @@ export const App = () => {
     return { ...target, state, reason: c.ok ? null : c.reason };
   }, [target, pieces, pads, pallets, me]);
 
+  // ---- Today's community blueprint ----
+  const dateKey = view?.dateKey;
+  const daily = useMemo(
+    () => (dateKey ? dailyBlueprint(dateKey) : null),
+    [dateKey]
+  );
+  const progress = useMemo(
+    () => (daily && pieces ? progressOf(daily, pieces) : null),
+    [daily, pieces]
+  );
+  const [cheer, setCheer] = useState<string | null>(null);
+  // Does the spot the worker aims at match the plan?
+  const planNote = useMemo(() => {
+    if (!daily || !aim || aim.state === 'remove') return null;
+    const want = planAt(daily, aim.spec);
+    if (!want) return null;
+    return want.material === aim.spec.material && want.dir === aim.spec.dir
+      ? '✓ on the plan'
+      : `the plan wants ${describePiece(want).replace(/ on floor \d+$/, '')} here`;
+  }, [daily, aim]);
+
   // Steel left on the worker's floor, once floors need crane deliveries.
   const steel = steelOf(kind);
   const steelLeft =
@@ -191,6 +215,11 @@ export const App = () => {
       );
       setView(r.view);
       if (!r.ok) setNotice(r.reason);
+      else if (daily && progress && progress.done < progress.total) {
+        const after = progressOf(daily, r.view.tower.pieces);
+        if (after.done === after.total)
+          setCheer(`🎉 ${daily.name} is finished! Great work, crew.`);
+      }
     } catch (e) {
       setNotice(
         e instanceof Error ? e.message : 'The crew dropped it. Try again.'
@@ -290,6 +319,12 @@ export const App = () => {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!cheer) return;
+    const t = setTimeout(() => setCheer(null), 6000);
+    return () => clearTimeout(t);
+  }, [cheer]);
 
   useEffect(() => {
     if (!notice) return;
@@ -451,6 +486,7 @@ export const App = () => {
             kind={kind}
             material={material}
             onAim={onAim}
+            plan={progress?.missing ?? []}
             build={
               siteMode
                 ? null
@@ -514,23 +550,51 @@ export const App = () => {
             >
               🏗️ Site work
             </button>
-            <span className="chip px-2 py-0.5 text-[11px] font-bold">
-              🧱 {tower.pieces.length} pieces
-            </span>
             {LOCAL_DEMO && backend.kind === 'local' && (
-              <button
-                className="btn3d btn-cream ml-auto px-2 py-0.5 text-[11px] font-bold"
-                onClick={() => setView(backend.service.reset())}
-              >
-                reset day
-              </button>
+              <>
+                <button
+                  className="btn3d btn-cream ml-auto px-2 py-0.5 text-[11px] font-bold"
+                  title="Dev tool: copy everything built here as blueprint pieces"
+                  onClick={() => {
+                    const text = blueprintJson(tower.pieces);
+                    navigator.clipboard.writeText(text).then(
+                      () =>
+                        setCheer(
+                          `📋 Copied ${tower.pieces.length} pieces as a blueprint`
+                        ),
+                      () => setNotice('Copy failed: clipboard not available.')
+                    );
+                  }}
+                >
+                  📋 copy blueprint
+                </button>
+                <button
+                  className="btn3d btn-cream px-2 py-0.5 text-[11px] font-bold"
+                  onClick={() => setView(backend.service.reset())}
+                >
+                  reset day
+                </button>
+              </>
             )}
+          </div>
+        )}
+
+        {!siteMode && daily && progress && (
+          <div className="pointer-events-auto">
+            <PlanCard blueprint={daily} progress={progress} />
           </div>
         )}
 
         {/* The open gap: touches here go through to the 3D camera. */}
         <div ref={gap} className="relative min-h-[150px] flex-1">
           {latest && <Ticker c={latest} now={now} />}
+          {cheer && (
+            <div className="pop-in absolute inset-x-0 top-10 z-10 flex justify-center">
+              <p className="rounded-xl border-2 border-[#1f7a35] bg-[#dcffe4] px-3 py-2 text-[14px] font-bold text-[#1f7a35] shadow">
+                {cheer}
+              </p>
+            </div>
+          )}
           {notice && (
             <div className="pop-in absolute inset-x-0 bottom-1 z-10 flex justify-center">
               <p className="rounded-xl bg-[#ffe1dc] px-3 py-2 text-[13px] font-semibold text-[#a1281b] shadow">
@@ -582,6 +646,7 @@ export const App = () => {
                 material={material}
                 setMaterial={setMaterial}
                 steelLeft={steelLeft}
+                planNote={planNote}
                 aim={aim}
                 busy={busy}
                 onAct={act}
@@ -595,6 +660,25 @@ export const App = () => {
         )}
       </div>
     </div>
+  );
+};
+
+/**
+ * Dev tool: the site's pieces as blueprint data, shifted so the build starts
+ * at cell (0, 0), in the order they were placed (which is a buildable order).
+ */
+const blueprintJson = (pieces: readonly PieceSpec[]): string => {
+  const x0 = Math.min(...pieces.map((p) => p.x), 0);
+  const z0 = Math.min(...pieces.map((p) => p.z), 0);
+  return JSON.stringify(
+    pieces.map(({ kind, x, z, level, dir, material }) => ({
+      kind,
+      x: x - x0,
+      z: z - z0,
+      level,
+      dir,
+      material,
+    }))
   );
 };
 
