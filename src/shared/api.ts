@@ -1,4 +1,4 @@
-import type { PalletSpec, PieceSpec } from './structure.ts';
+import type { DropSpec, PalletSpec, PieceSpec } from './structure.ts';
 import type {
   Action,
   Contribution,
@@ -54,7 +54,8 @@ export type SiteResponse =
 /** POST /api/build body: place a piece, or take down your own piece by its slot. */
 export type BuildRequest =
   | { dateKey: string; op: 'place'; piece: PieceSpec }
-  | { dateKey: string; op: 'deliver'; pallet: PalletSpec }
+  | { dateKey: string; op: 'deliver'; drop: DropSpec }
+  | { dateKey: string; op: 'return'; pallet: PalletSpec }
   | { dateKey: string; op: 'remove'; slot: string };
 
 /** Same shape as site work: unlimited, with fresh state either way. */

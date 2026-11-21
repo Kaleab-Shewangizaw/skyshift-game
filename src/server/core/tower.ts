@@ -8,6 +8,7 @@ import {
   applyDeliver,
   applyPlace,
   applyRemove,
+  applyReturn,
   applySiteWork,
   type ContributionKind,
   type SiteWork,
@@ -162,9 +163,13 @@ export const doBuild = (
     return editTower(p, 'place', (t) =>
       applyPlace(t, r.piece, p.username, p.now)
     );
+  if (r.op === 'return')
+    return editTower(p, 'return', (t) =>
+      applyReturn(t, r.pallet, p.username, p.now)
+    );
   if (r.op === 'deliver')
     return editTower(p, 'deliver', (t) =>
-      applyDeliver(t, r.pallet, p.username, p.now)
+      applyDeliver(t, r.drop, p.username, p.now)
     );
   return editTower(p, 'remove', (t) =>
     applyRemove(t, r.slot, p.username, p.now)

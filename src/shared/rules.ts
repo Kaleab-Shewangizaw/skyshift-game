@@ -6,8 +6,9 @@ import {
   canDeliver,
   describePiece,
   needsPallet,
-  PALLET_SIZE,
+  dropParts,
   type Pallet,
+  type DropSpec,
   type PalletSpec,
   type Piece,
   type PieceSpec,
@@ -36,7 +37,7 @@ export type SiteWork = 'demolish' | 'prepare';
 /** Everything that shows up in the crew feed: daily shifts plus site work. */
 /** Freeform building: placing or taking down a piece. */
 /** Freeform building: placing or taking down a piece, or a crane delivery. */
-export type BuildOp = 'place' | 'remove' | 'deliver';
+export type BuildOp = 'place' | 'remove' | 'deliver' | 'return';
 
 export type ContributionKind = ShiftKind | SiteWork | BuildOp;
 
@@ -588,31 +589,58 @@ const useSteel = (pallets: readonly Pallet[], spec: PieceSpec): Pallet[] => {
     .filter((q) => q.left > 0);
 };
 
-/** The crane sets a pallet of steel down on a floor slab. */
+/** The crane sets a load of steel down on a floor slab; it tops up any pallet already there. */
 export const applyDeliver = (
   s: TowerState,
-  d: PalletSpec,
+  d: DropSpec,
   user: string,
   at: number
 ): Applied => {
   const check = canDeliver(s.pieces, s.pallets, d);
   if (!check.ok) return { error: check.reason };
-  const n = PALLET_SIZE[d.kind];
-  const same = s.pallets.findIndex(
-    (q) =>
-      q.kind === d.kind && q.x === d.x && q.z === d.z && q.level === d.level
-  );
-  const pallets =
-    same >= 0
-      ? s.pallets.map((q, j) => (j === same ? { ...q, left: q.left + n } : q))
-      : [...s.pallets, { ...d, left: n, by: user, at }];
-  const summary = `craned ${n} ${d.kind}s up to floor ${d.level + 1}`;
+  const { x, z, level } = d;
+  let pallets = s.pallets;
+  const parts = dropParts(d);
+  for (const { kind, n } of parts) {
+    const same = pallets.findIndex(
+      (q) => q.kind === kind && q.x === x && q.z === z && q.level === level
+    );
+    pallets =
+      same >= 0
+        ? pallets.map((q, j) => (j === same ? { ...q, left: q.left + n } : q))
+        : [...pallets, { kind, x, z, level, left: n, by: user, at }];
+  }
+  const what = parts.map(({ kind, n }) => `${n} ${kind}s`).join(' and ');
+  const summary = `craned ${what} up to floor ${level + 1}`;
   return {
     summary,
     state: logged(
       s,
       { pallets },
       { user, kind: 'deliver', summary, at, teamwork: false }
+    ),
+  };
+};
+
+/** Send a pallet's leftover steel back down to the stack; anyone on site can. */
+export const applyReturn = (
+  s: TowerState,
+  q: PalletSpec,
+  user: string,
+  at: number
+): Applied => {
+  const pallet = s.pallets.find(
+    (p) =>
+      p.kind === q.kind && p.x === q.x && p.z === q.z && p.level === q.level
+  );
+  if (!pallet) return { error: 'That pallet is already gone.' };
+  const summary = `sent ${pallet.left} ${pallet.kind}s back down from floor ${pallet.level + 1}`;
+  return {
+    summary,
+    state: logged(
+      s,
+      { pallets: s.pallets.filter((p) => p !== pallet) },
+      { user, kind: 'return', summary, at, teamwork: false }
     ),
   };
 };

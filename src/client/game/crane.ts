@@ -1,4 +1,4 @@
-import type { SteelKind } from '../../shared/structure';
+import type { CraneLoadId } from '../../shared/structure';
 import { CRANE_POS, STACK_POS } from '../three/layout';
 
 // The tower crane, as live state. Like `controls`, it changes every frame and
@@ -8,8 +8,8 @@ import { CRANE_POS, STACK_POS } from '../three/layout';
 // positive angles turn toward world -z). The trolley runs along the jib
 // (`trolley`, meters from the mast) and the hook hangs at height `hookY`.
 
-/** The crane carries a whole pallet of beams or columns. */
-export type CraneLoad = SteelKind;
+/** The crane carries one load: beams, columns, or a mix (see CRANE_LOADS). */
+export type CraneLoad = CraneLoadId;
 
 export type CraneState = {
   slew: number;
@@ -46,6 +46,46 @@ export const hookWorld = (): { x: number; y: number; z: number } => ({
   z: CRANE_POS[1] - Math.sin(state.slew) * state.trolley,
 });
 
+type Pose = { slew: number; trolley: number; hookY: number };
+
+/** Where the autopilot is flying the hook, if anywhere. Any manual input cancels it. */
+let autopilot: Pose | null = null;
+/** Where the hook was when the last load was dropped. */
+let lastDrop: Pose | null = null;
+
+const AUTO_SLEW = 1.6;
+const AUTO_TROLLEY = 16;
+const AUTO_HOIST = 18;
+
+/** Move `v` toward `to` by at most `max`. */
+const toward = (v: number, to: number, max: number) =>
+  v + clamp(to - v, -max, max);
+
+/** Shortest signed turn from angle a to angle b. */
+const turnBetween = (a: number, b: number) =>
+  Math.atan2(Math.sin(b - a), Math.cos(b - a));
+
+/** Swing back over the steel stack, hook low enough to pick up. */
+export const flyToStack = () => {
+  const dx = STACK_POS[0] - CRANE_POS[0];
+  const dz = STACK_POS[1] - CRANE_POS[1];
+  autopilot = {
+    slew: Math.atan2(-dz, dx),
+    trolley: clamp(Math.hypot(dx, dz), MIN_REACH, MAX_REACH),
+    hookY: 6,
+  };
+};
+
+/** Fly back to where the last load was dropped. */
+export const flyToLastDrop = () => {
+  if (lastDrop) autopilot = { ...lastDrop };
+};
+
+export const hasLastDrop = (): boolean => lastDrop !== null;
+
+/** True while the autopilot is moving the crane. */
+export const flying = (): boolean => autopilot !== null;
+
 /** Move the crane by one frame of input: x turns, y runs the trolley, hoist lifts. */
 export const stepCrane = (
   dt: number,
@@ -54,6 +94,24 @@ export const stepCrane = (
   hoist: number,
   buildingTop: number
 ) => {
+  if (turn !== 0 || reach !== 0 || hoist !== 0) autopilot = null;
+  const auto = autopilot;
+  if (auto) {
+    const d = turnBetween(state.slew, auto.slew);
+    state.slew += clamp(d, -AUTO_SLEW * dt, AUTO_SLEW * dt);
+    state.trolley = toward(state.trolley, auto.trolley, AUTO_TROLLEY * dt);
+    state.hookY = toward(
+      state.hookY,
+      clamp(auto.hookY, HOOK_MIN, mastHeight(buildingTop) - 3),
+      AUTO_HOIST * dt
+    );
+    const there =
+      Math.abs(turnBetween(state.slew, auto.slew)) < 0.002 &&
+      Math.abs(state.trolley - auto.trolley) < 0.02 &&
+      Math.abs(state.hookY - auto.hookY) < 0.05;
+    if (there) autopilot = null;
+    return;
+  }
   state.slew -= turn * SLEW_SPEED * dt;
   state.trolley = clamp(
     state.trolley + reach * TROLLEY_SPEED * dt,
@@ -84,6 +142,9 @@ export const attachLoad = (load: CraneLoad) => {
   state.load = load;
 };
 
-export const dropLoad = () => {
+/** Let go of the load. After a real drop, remember where for "Last drop". */
+export const dropLoad = (delivered: boolean) => {
+  if (delivered)
+    lastDrop = { slew: state.slew, trolley: state.trolley, hookY: state.hookY };
   state.load = null;
 };

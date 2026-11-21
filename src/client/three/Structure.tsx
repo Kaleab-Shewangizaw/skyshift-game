@@ -7,7 +7,7 @@ import {
   buildableCells,
   slotKey,
   type Pallet,
-  type PalletSpec,
+  type DropSpot,
   type Piece,
   type PieceSpec,
 } from '../../shared/structure';
@@ -159,7 +159,7 @@ export type BuildView = {
   level: number;
   ghost: { spec: PieceSpec; state: GhostState } | null;
   /** Where the crane's load would be set down. */
-  drop?: { spec: PalletSpec; ok: boolean } | null;
+  drop?: { spec: DropSpot; ok: boolean } | null;
 };
 
 type Props = {
@@ -283,7 +283,7 @@ const Ghost = ({ spec, state }: { spec: PieceSpec; state: GhostState }) => {
 };
 
 /** World position of the middle of a pallet's deck on its floor slab. */
-const palletBase = (q: PalletSpec): [number, number, number] => [
+const palletBase = (q: DropSpot): [number, number, number] => [
   q.x * CELL + CELL / 2,
   PAD_TOP + q.level * STOREY + 0.25,
   q.z * CELL + CELL / 2,
@@ -291,9 +291,12 @@ const palletBase = (q: PalletSpec): [number, number, number] => [
 
 /** A timber pallet with the remaining beams or columns stacked on it. */
 const PalletStack = ({ pallet }: { pallet: Pallet }) => {
-  const [x, y, z] = palletBase(pallet);
-  const shown = Math.min(pallet.left, 8);
+  const [x, y, cz] = palletBase(pallet);
   const beam = pallet.kind === 'beam';
+  // Beams on one half of the cell, columns on the other, so both fit.
+  const z = cz + (beam ? -0.75 : 0.75);
+  // Stack up to four rows; a big pallet just looks full.
+  const shown = Math.min(pallet.left, 12);
   return (
     <group position={[x, y, z]}>
       <mesh position={[0, 0.08, 0]} castShadow receiveShadow>
@@ -322,7 +325,7 @@ const PalletStack = ({ pallet }: { pallet: Pallet }) => {
 };
 
 /** Pulsing outline of where the crane would set its pallet down. */
-const DropGhost = ({ spec, ok }: { spec: PalletSpec; ok: boolean }) => {
+const DropGhost = ({ spec, ok }: { spec: DropSpot; ok: boolean }) => {
   const mat = useRef<THREE.MeshBasicMaterial>(null);
   useFrame(({ clock }) => {
     if (mat.current)

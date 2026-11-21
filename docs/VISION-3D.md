@@ -77,8 +77,9 @@ Each stage ends playable in `npm run play` and on Reddit.
    `components/CraneHud.tsx`): enter at the mast; joystick slews and runs the trolley, ▲▼
    hoist; pick a beam or column off the steel stack and release it into the nearest slot.
    Reworked 2026-11-20 (designer's idea): the crane does logistics, the worker builds.
-   Floors 1–2: steel by hand. Floor 3+: the crane drops pallets (6 beams / 4 columns) onto
-   the highest slab under the hook; each beam or column on that floor uses one
+   Floors 1–2: steel by hand. Floor 3+: the crane drops a load (24 beams, 16 columns, or
+   16 + 8 mixed; 2026-11-21) onto the highest slab under the hook, with 🧭/🎯 autopilot to
+   the stack and back to the last drop; each beam or column on that floor uses one
    (`TowerState.pallets`, `POST /api/build` op `deliver`). Faster crane, generous pick-up.
    ✅ **Stairs** piece: fills a cell, climbs the way the worker faces, needs an open
    stairwell above; physics are 7 step blocks.

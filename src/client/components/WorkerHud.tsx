@@ -4,6 +4,7 @@ import {
   WALLS,
   WALL_MATERIALS,
   describePiece,
+  type Pallet,
   type PieceKind,
   type PieceSpec,
   type WallMaterial,
@@ -40,6 +41,9 @@ type Props = {
   /** Standing at the crane's foot: offer to climb into the cab. */
   nearCrane: boolean;
   onEnterCrane: () => void;
+  /** Pallets right next to the worker, which can be sent back down. */
+  nearPallets: Pallet[];
+  onReturn: (p: Pallet) => void;
 };
 
 /** On-foot controls: piece hotbar, joystick, build and jump buttons. */
@@ -118,6 +122,16 @@ export const WorkerHud = (p: Props) => {
       <div className="flex items-end justify-between">
         <Joystick />
         <div className="flex flex-col items-end gap-2">
+          {p.nearPallets.map((q) => (
+            <button
+              key={`${q.kind}:${q.x},${q.z}`}
+              className="btn3d btn-cream pop-in px-3 py-1.5 text-[12px] font-bold"
+              disabled={p.busy}
+              onClick={() => p.onReturn(q)}
+            >
+              ↩ Send back {q.left} {q.kind}s
+            </button>
+          ))}
           {p.nearCrane && (
             <button
               className="btn3d btn-blue shine pop-in px-3 py-2 text-[13px] font-bold text-outline-sm"

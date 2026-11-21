@@ -18,9 +18,11 @@ Climb into the tower crane to lift steel into place. The bulldozer is next (see
   next floor. Leave the cell above open as the stairwell. Climbing columns still works too.
 - **Crane**: walk to the foot of the crane and tap **Enter crane**. The joystick (or WASD)
   turns the jib and runs the hook in and out; hold ▲ ▼ (or R / F) to raise and lower it.
-  Choose a pallet (6 beams or 4 columns), swing the hook over the steel stack beside the
-  crane, **Pick up**, swing it over the building and **Drop** it: it lands on the highest
-  floor slab under the hook.
+  Choose a load (24 beams, 16 columns, or a mix of 16 beams + 8 columns), swing the hook
+  over the steel stack beside the crane (or tap **🧭 To stack**), **Pick up**, swing it over
+  the building (or **🎯 Last drop**) and **Drop** it: it lands on the highest floor slab
+  under the hook, and the crane heads back to the stack by itself.
+  Too much steel up there? Walk up beside the pallet and tap **↩ Send back**.
 - **Site work** (top left): demolish neighboring tiles to grow the site, and pour
   foundation pads where you want to build.
 

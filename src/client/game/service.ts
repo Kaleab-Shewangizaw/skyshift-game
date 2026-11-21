@@ -13,12 +13,13 @@ import {
   applyDeliver,
   applyPlace,
   applyRemove,
+  applyReturn,
   applySiteWork,
   emptyTower,
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
-import type { PalletSpec, PieceSpec } from '../../shared/structure';
+import type { DropSpec, PalletSpec, PieceSpec } from '../../shared/structure';
 import {
   parseSiteResponse,
   parseStateResponse,
@@ -38,7 +39,8 @@ export type SiteResult =
 
 export type BuildOp =
   | { op: 'place'; piece: PieceSpec }
-  | { op: 'deliver'; pallet: PalletSpec }
+  | { op: 'deliver'; drop: DropSpec }
+  | { op: 'return'; pallet: PalletSpec }
   | { op: 'remove'; slot: string };
 
 export type GameService = {
@@ -184,8 +186,10 @@ export const createLocalService = (username = 'you') => {
         op.op === 'place'
           ? applyPlace(tower, op.piece, username, at)
           : op.op === 'deliver'
-            ? applyDeliver(tower, op.pallet, username, at)
-            : applyRemove(tower, op.slot, username, at)
+            ? applyDeliver(tower, op.drop, username, at)
+            : op.op === 'return'
+              ? applyReturn(tower, op.pallet, username, at)
+              : applyRemove(tower, op.slot, username, at)
       );
     },
     reset() {

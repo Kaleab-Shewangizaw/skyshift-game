@@ -417,18 +417,32 @@ export type SteelKind = 'beam' | 'column';
 /** Floors 1 and 2 (levels 0 and 1): steel is carried up by hand. */
 export const HAND_LEVELS = 2;
 
-/** How many pieces one crane load brings. */
-export const PALLET_SIZE: Record<SteelKind, number> = { beam: 6, column: 4 };
-const PALLET_MAX = 24;
+/** What the crane can bring up in one trip. */
+export type CraneLoadId = 'beams' | 'columns' | 'mixed';
+
+export const CRANE_LOADS: Record<
+  CraneLoadId,
+  { beam: number; column: number }
+> = {
+  beams: { beam: 24, column: 0 },
+  columns: { beam: 0, column: 16 },
+  mixed: { beam: 16, column: 8 },
+};
+
+export const CRANE_LOAD_IDS: CraneLoadId[] = ['beams', 'columns', 'mixed'];
+
+/** Most steel one pallet can hold. */
+const PALLET_MAX = 80;
 export const MAX_PALLETS = 40;
 
-/** Where the crane sets a pallet down: on the slab of cell (x, z) that floors `level`. */
-export type PalletSpec = {
-  kind: SteelKind;
-  x: number;
-  z: number;
-  level: number;
-};
+/** A spot on an upper floor: the slab of cell (x, z) that floors `level`. */
+export type DropSpot = { x: number; z: number; level: number };
+
+/** What a crane drop asks for: a load, set down at a spot. */
+export type DropSpec = DropSpot & { load: CraneLoadId };
+
+/** A stack of one kind of steel on a floor. A mixed drop makes two, side by side. */
+export type PalletSpec = DropSpot & { kind: SteelKind };
 
 export type Pallet = PalletSpec & { left: number; by: string; at: number };
 
@@ -452,11 +466,10 @@ export const steelOnFloor = (
 /** Where a load hanging at world (wx, wy, wz) would land: the highest slab below it. */
 export const deliveryTarget = (
   pieces: readonly PieceSpec[],
-  kind: SteelKind,
   wx: number,
   wy: number,
   wz: number
-): PalletSpec | null => {
+): DropSpot | null => {
   const x = Math.floor(wx / CELL);
   const z = Math.floor(wz / CELL);
   let best = -1;
@@ -469,13 +482,26 @@ export const deliveryTarget = (
       p.level > best
     )
       best = p.level;
-  return best < 0 ? null : { kind, x, z, level: best + 1 };
+  return best < 0 ? null : { x, z, level: best + 1 };
 };
+
+const STEEL_KINDS: SteelKind[] = ['beam', 'column'];
+
+/** The pallets a drop adds to (or creates): one per kind of steel in the load. */
+export const dropParts = (d: DropSpec): { kind: SteelKind; n: number }[] =>
+  STEEL_KINDS.map((kind) => ({ kind, n: CRANE_LOADS[d.load][kind] })).filter(
+    (part) => part.n > 0
+  );
+
+const palletAt = (pallets: readonly Pallet[], kind: SteelKind, d: DropSpot) =>
+  pallets.find(
+    (q) => q.kind === kind && q.x === d.x && q.z === d.z && q.level === d.level
+  );
 
 export const canDeliver = (
   pieces: readonly PieceSpec[],
   pallets: readonly Pallet[],
-  d: PalletSpec
+  d: DropSpec
 ): PlaceCheck => {
   if (!isWhole(d.x) || !isWhole(d.z) || !Number.isInteger(d.level))
     return { ok: false, reason: "The load can't go there." };
@@ -483,16 +509,18 @@ export const canDeliver = (
     return { ok: false, reason: 'Set the pallet down on a floor slab.' };
   if (!has(indexOf(pieces), spec('slab', d.x, d.z, d.level - 1)))
     return { ok: false, reason: 'Set the pallet down on a floor slab.' };
-  const same = pallets.find(
-    (q) =>
-      q.kind === d.kind && q.x === d.x && q.z === d.z && q.level === d.level
-  );
-  if (same && same.left + PALLET_SIZE[d.kind] > PALLET_MAX)
+  const parts = dropParts(d);
+  if (
+    parts.some(
+      ({ kind, n }) => (palletAt(pallets, kind, d)?.left ?? 0) + n > PALLET_MAX
+    )
+  )
     return {
       ok: false,
       reason: 'That pallet is already full. Use it up first.',
     };
-  if (!same && pallets.length >= MAX_PALLETS)
+  const fresh = parts.filter(({ kind }) => !palletAt(pallets, kind, d)).length;
+  if (pallets.length + fresh > MAX_PALLETS)
     return {
       ok: false,
       reason: 'Too many pallets on site. Use some up first.',

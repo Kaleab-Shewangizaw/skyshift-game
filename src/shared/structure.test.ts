@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   applyDeliver,
+  applyReturn,
   applyPlace,
   applyRemove,
   emptyTower,
@@ -150,38 +151,62 @@ void test('floors 1 and 2 take steel by hand; higher floors need a crane pallet'
   const noSteel = canPlace(s.pieces, s.pads, col, s.pallets);
   assert.ok(!noSteel.ok && /pallet/.test(noSteel.reason));
 
-  // The crane sets 4 columns down on floor 3 (on the slab of cell 3,0).
-  const target = deliveryTarget(s.pieces, 'column', 10, 12, 1);
-  assert.deepEqual(target, { kind: 'column', x: 3, z: 0, level: 2 });
-  assert.equal(deliveryTarget(s.pieces, 'column', 10, 5, 1)?.level, 1); // below the top slab
-  assert.equal(deliveryTarget(s.pieces, 'column', 30, 12, 1), null); // no slab there
-  const d = applyDeliver(s, { kind: 'column', x: 3, z: 0, level: 2 }, 'bo', 2);
-  assert.ok(!('error' in d) && /4 columns up to floor 3/.test(d.summary));
+  // The crane sets a load of 16 columns down on floor 3 (on the slab of cell 3,0).
+  assert.deepEqual(deliveryTarget(s.pieces, 10, 12, 1), {
+    x: 3,
+    z: 0,
+    level: 2,
+  });
+  assert.equal(deliveryTarget(s.pieces, 10, 5, 1)?.level, 1); // below the top slab
+  assert.equal(deliveryTarget(s.pieces, 30, 12, 1), null); // no slab there
+  const spot = { x: 3, z: 0, level: 2 };
+  const d = applyDeliver(s, { ...spot, load: 'columns' }, 'bo', 2);
+  assert.ok(!('error' in d) && /16 columns up to floor 3/.test(d.summary));
   s = d.state;
-  assert.equal(steelOnFloor(s.pallets, 'column', 2), 4);
+  assert.equal(steelOnFloor(s.pallets, 'column', 2), 16);
 
-  // Building from the pallet uses it up; an empty pallet disappears.
-  for (const x of [3, 4, 5]) s = place(s, piece('column', x, 0, 2));
-  assert.equal(steelOnFloor(s.pallets, 'column', 2), 1);
-  s = place(s, piece('column', 3, 1, 2));
-  assert.equal(s.pallets.length, 0);
-  assert.equal(
-    canPlace(s.pieces, s.pads, piece('column', 4, 1, 2), s.pallets).ok,
-    false
+  // Building from the pallet uses it up.
+  for (const [x, z] of [
+    [3, 0],
+    [4, 0],
+    [5, 0],
+    [3, 1],
+  ])
+    s = place(s, piece('column', x ?? 0, z ?? 0, 2));
+  assert.equal(steelOnFloor(s.pallets, 'column', 2), 12);
+
+  // A mixed load tops up the columns and adds a beam pallet beside them.
+  const mixed = applyDeliver(s, { ...spot, load: 'mixed' }, 'bo', 3);
+  assert.ok(
+    !('error' in mixed) && /16 beams and 8 columns/.test(mixed.summary)
   );
+  s = mixed.state;
+  assert.equal(steelOnFloor(s.pallets, 'column', 2), 20);
+  assert.equal(steelOnFloor(s.pallets, 'beam', 2), 16);
+  assert.equal(s.pallets.length, 2);
+
   // The slab can't be removed while a pallet sits on it.
-  const again = applyDeliver(
-    s,
-    { kind: 'beam', x: 3, z: 0, level: 2 },
-    'bo',
-    3
-  );
-  assert.ok(!('error' in again));
-  const r = applyRemove(again.state, slotKey(piece('slab', 3, 0, 1)), 'ana', 4);
+  const r = applyRemove(s, slotKey(piece('slab', 3, 0, 1)), 'ana', 4);
   assert.ok('error' in r);
   // Pallets only go on slabs.
   assert.ok(
-    'error' in applyDeliver(s, { kind: 'beam', x: 9, z: 9, level: 2 }, 'bo', 5)
+    'error' in applyDeliver(s, { x: 9, z: 9, level: 2, load: 'beams' }, 'bo', 5)
+  );
+});
+
+void test('an empty pallet disappears', () => {
+  let s = frame(withPad(), 2);
+  s = {
+    ...s,
+    pallets: [
+      { kind: 'column', x: 3, z: 0, level: 2, left: 1, by: 'bo', at: 1 },
+    ],
+  };
+  s = place(s, piece('column', 3, 0, 2));
+  assert.equal(s.pallets.length, 0);
+  assert.equal(
+    canPlace(s.pieces, s.pads, piece('column', 4, 0, 2), s.pallets).ok,
+    false
   );
 });
 
@@ -357,5 +382,22 @@ void test('beams bolt end to end into long lines that rest on a column somewhere
         'ana',
         9
       )
+  );
+});
+
+void test('leftover steel can be sent back down', () => {
+  let s = frame(withPad(), 2);
+  const spot = { x: 3, z: 0, level: 2 };
+  const d = applyDeliver(s, { ...spot, load: 'mixed' }, 'bo', 2);
+  assert.ok(!('error' in d));
+  s = d.state;
+  const r = applyReturn(s, { ...spot, kind: 'column' }, 'ana', 3);
+  assert.ok(
+    !('error' in r) && /sent 8 columns back down from floor 3/.test(r.summary)
+  );
+  assert.equal(steelOnFloor(r.state.pallets, 'column', 2), 0);
+  assert.equal(steelOnFloor(r.state.pallets, 'beam', 2), 16); // the beams stay
+  assert.ok(
+    'error' in applyReturn(r.state, { ...spot, kind: 'column' }, 'ana', 4)
   );
 });

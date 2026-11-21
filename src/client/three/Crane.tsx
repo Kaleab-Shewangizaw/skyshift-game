@@ -58,11 +58,14 @@ export const Crane = ({ x, z, buildingTop, operated }: Props) => {
     if (hook.current) hook.current.position.y = -drop;
     // The pallet hangs square to the city grid, whatever way the jib points.
     if (beams.current) {
-      beams.current.visible = c.load === 'beam';
+      beams.current.visible = c.load === 'beams' || c.load === 'mixed';
+      // A mixed load hangs as two pallets side by side.
+      beams.current.position.z = c.load === 'mixed' ? -0.8 : 0;
       beams.current.rotation.y = -c.slew;
     }
     if (columns.current) {
-      columns.current.visible = c.load === 'column';
+      columns.current.visible = c.load === 'columns' || c.load === 'mixed';
+      columns.current.position.z = c.load === 'mixed' ? 0.8 : 0;
       columns.current.rotation.y = -c.slew;
     }
   });

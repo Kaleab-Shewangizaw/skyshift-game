@@ -27,10 +27,14 @@ import {
   type TowerState,
 } from './rules.ts';
 import {
+  CRANE_LOAD_IDS,
   PIECE_KINDS,
   WALL_MATERIALS,
   isWellFormed,
+  type CraneLoadId,
   type Dir,
+  type DropSpec,
+  type DropSpot,
   type Pallet,
   type PalletSpec,
   type Piece,
@@ -60,7 +64,7 @@ const isShiftKind = (v: unknown): v is ShiftKind =>
   v === 'build' || v === 'reinforce' || v === 'decorate';
 
 const isBuildOp = (v: unknown): v is BuildOp =>
-  v === 'place' || v === 'remove' || v === 'deliver';
+  v === 'place' || v === 'remove' || v === 'deliver' || v === 'return';
 
 const isSiteWork = (v: unknown): v is SiteWork =>
   v === 'demolish' || v === 'prepare';
@@ -148,7 +152,33 @@ const isDir = (v: unknown): v is Dir =>
 const isSteelKind = (v: unknown): v is SteelKind =>
   v === 'beam' || v === 'column';
 
-/** A crane drop: steel kind and a cell on an upper floor. Shape only; rules check the rest. */
+const isLoadId = (v: unknown): v is CraneLoadId =>
+  typeof v === 'string' && CRANE_LOAD_IDS.some((id) => id === v);
+
+/** A cell on a floor: whole numbers in range. Shape only; rules check the rest. */
+const parseSpot = (v: unknown): DropSpot | null => {
+  if (!isObject(v) || !('x' in v) || !('z' in v) || !('level' in v))
+    return null;
+  const { x, z, level } = v;
+  if (
+    typeof x !== 'number' ||
+    typeof z !== 'number' ||
+    typeof level !== 'number'
+  )
+    return null;
+  if (![x, z, level].every((n) => Number.isInteger(n) && Math.abs(n) <= 60))
+    return null;
+  return { x, z, level };
+};
+
+/** A crane drop request: which load, and where. */
+export const parseDropSpec = (v: unknown): DropSpec | null => {
+  const spot = parseSpot(v);
+  if (!spot || !isObject(v) || !('load' in v) || !isLoadId(v.load)) return null;
+  return { ...spot, load: v.load };
+};
+
+/** A stored pallet's position and kind. */
 export const parsePalletSpec = (v: unknown): PalletSpec | null => {
   if (
     !isObject(v) ||
@@ -378,9 +408,13 @@ export const parseBuildRequest = (v: unknown): BuildRequest | null => {
     const piece = parsePieceSpec(v.piece);
     return piece ? { dateKey: v.dateKey, op: 'place', piece } : null;
   }
-  if (v.op === 'deliver' && 'pallet' in v) {
+  if (v.op === 'return' && 'pallet' in v) {
     const pallet = parsePalletSpec(v.pallet);
-    return pallet ? { dateKey: v.dateKey, op: 'deliver', pallet } : null;
+    return pallet ? { dateKey: v.dateKey, op: 'return', pallet } : null;
+  }
+  if (v.op === 'deliver' && 'drop' in v) {
+    const drop = parseDropSpec(v.drop);
+    return drop ? { dateKey: v.dateKey, op: 'deliver', drop } : null;
   }
   if (
     v.op === 'remove' &&

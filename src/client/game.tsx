@@ -36,6 +36,7 @@ import {
   isSteel,
   slotKey,
   steelOnFloor,
+  type Pallet,
   type PieceKind,
   type PieceSpec,
   type WallMaterial,
@@ -44,7 +45,14 @@ import { SitePanel } from './components/SitePanel';
 import { WorkerHud } from './components/WorkerHud';
 import { CraneHud } from './components/CraneHud';
 import { useKeyboard } from './game/controls';
-import { attachLoad, dropLoad, type CraneLoad } from './game/crane';
+import {
+  attachLoad,
+  dropLoad,
+  flyToLastDrop,
+  flyToStack,
+  hasLastDrop,
+  type CraneLoad,
+} from './game/crane';
 import {
   createLocalService,
   createServerService,
@@ -195,7 +203,7 @@ export const App = () => {
   const [inCrane, setInCrane] = useState(false);
   const [nearCrane, setNearCrane] = useState(false);
   const [craneAim, setCraneAim] = useState<CraneAim | null>(null);
-  const [craneChoice, setCraneChoice] = useState<CraneLoad>('beam');
+  const [craneChoice, setCraneChoice] = useState<CraneLoad>('beams');
   // Mirrors the crane's load so the HUD re-renders when it changes.
   const [hookLoad, setHookLoad] = useState<CraneLoad | null>(null);
 
@@ -203,9 +211,10 @@ export const App = () => {
   const drop = useMemo(() => {
     if (!hookLoad || !craneAim || !pieces || !pallets) return null;
     const { x, y, z } = craneAim.hook;
-    const spec = deliveryTarget(pieces, hookLoad, x, y - 2, z);
-    if (!spec)
+    const spot = deliveryTarget(pieces, x, y - 2, z);
+    if (!spot)
       return { spec: null, reason: 'Swing the pallet over a floor slab.' };
+    const spec = { ...spot, load: hookLoad };
     const c = canDeliver(pieces, pallets, spec);
     return { spec, reason: c.ok ? null : c.reason };
   }, [hookLoad, craneAim, pieces, pallets]);
@@ -215,20 +224,66 @@ export const App = () => {
     setHookLoad(craneChoice);
   };
   const putBack = () => {
-    dropLoad();
+    dropLoad(false);
     setHookLoad(null);
   };
   const release = async () => {
     if (!drop?.spec || drop.reason) return;
     setBusy(true);
     try {
-      const r = await service.build({ op: 'deliver', pallet: drop.spec });
+      const r = await service.build({ op: 'deliver', drop: drop.spec });
       setView(r.view);
-      if (r.ok) putBack();
-      else setNotice(r.reason);
+      if (r.ok) {
+        dropLoad(true);
+        setHookLoad(null);
+        // Head straight back for the next load.
+        flyToStack();
+      } else setNotice(r.reason);
     } catch (e) {
       setNotice(
         e instanceof Error ? e.message : 'The load slipped. Try again.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ---- Leftover steel: a worker beside a pallet can send it back down ----
+  const [cell, setCell] = useState<{
+    x: number;
+    z: number;
+    level: number;
+  } | null>(null);
+  const onCell = useCallback(
+    (x: number, z: number, level: number) => setCell({ x, z, level }),
+    []
+  );
+  const nearPallets = useMemo(
+    () =>
+      cell && pallets
+        ? pallets.filter(
+            (q) =>
+              q.level === cell.level &&
+              Math.abs(q.x - cell.x) <= 1 &&
+              Math.abs(q.z - cell.z) <= 1
+          )
+        : [],
+    [cell, pallets]
+  );
+  const sendBack = async (q: Pallet) => {
+    setBusy(true);
+    try {
+      const r = await service.build({
+        op: 'return',
+        pallet: { kind: q.kind, x: q.x, z: q.z, level: q.level },
+      });
+      setView(r.view);
+      if (!r.ok) setNotice(r.reason);
+    } catch (e) {
+      setNotice(
+        e instanceof Error
+          ? e.message
+          : 'The pallet would not budge. Try again.'
       );
     } finally {
       setBusy(false);
@@ -414,6 +469,7 @@ export const App = () => {
             inCrane={inCrane}
             onCraneAim={setCraneAim}
             onNearCrane={setNearCrane}
+            onCell={onCell}
             siteMode={siteMode}
             tool={tool}
             candidates={candidates}
@@ -514,6 +570,8 @@ export const App = () => {
                 onPickUp={pickUp}
                 onRelease={release}
                 onPutBack={putBack}
+                onToStack={flyToStack}
+                onToLastDrop={hasLastDrop() ? flyToLastDrop : null}
                 onExit={() => setInCrane(false)}
               />
             ) : (
@@ -527,6 +585,8 @@ export const App = () => {
                 busy={busy}
                 onAct={act}
                 nearCrane={nearCrane}
+                nearPallets={nearPallets}
+                onReturn={sendBack}
                 onEnterCrane={() => setInCrane(true)}
               />
             )}
@@ -546,6 +606,7 @@ const KIND_ICON: Record<ContributionKind, string> = {
   place: '🏗️',
   remove: '🗑',
   deliver: '🏗️',
+  return: '↩',
 };
 
 /** The latest piece of work on the site, as a speech bubble. */

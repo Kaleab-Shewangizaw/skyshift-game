@@ -3,6 +3,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
+  CELL,
   facingDir,
   slotKey,
   snapToGrid,
@@ -26,6 +27,8 @@ type Props = {
   visible: boolean;
   /** Called when the worker walks up to, or away from, the crane. */
   onNearCrane: (near: boolean) => void;
+  /** Called when the worker steps into another grid cell or floor. */
+  onCell: (x: number, z: number, level: number) => void;
 };
 
 /** How far in front of the worker the build spot is (m). */
@@ -45,6 +48,7 @@ export const Player = ({
   onAim,
   visible,
   onNearCrane,
+  onCell,
 }: Props) => {
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
@@ -68,6 +72,7 @@ export const Player = ({
   const stride = useRef(0);
   const lastAim = useRef('');
   const nearCrane = useRef(false);
+  const lastCell = useRef('');
 
   useEffect(() => {
     if (!drive) return;
@@ -156,6 +161,15 @@ export const Player = ({
       torso.current.position.y =
         Math.abs(Math.cos(walkPhase.current)) * 0.05 * k;
       torso.current.rotation.x = 0.08 * k;
+    }
+
+    const cx = Math.floor(b.x / CELL);
+    const cz = Math.floor(b.z / CELL);
+    const floor = storeyOf(b.y);
+    const cellKey = `${cx},${cz},${floor}`;
+    if (cellKey !== lastCell.current) {
+      lastCell.current = cellKey;
+      onCell(cx, cz, floor);
     }
 
     const near =

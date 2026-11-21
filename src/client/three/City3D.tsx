@@ -35,6 +35,7 @@ export type City3DProps = {
   inCrane: boolean;
   onCraneAim: (aim: CraneAim) => void;
   onNearCrane: (near: boolean) => void;
+  onCell: (x: number, z: number, level: number) => void;
   /** Site work overview: the camera pulls back over the site and taps pick tiles. */
   siteMode: boolean;
   tool: SiteWork;
@@ -117,6 +118,7 @@ export const City3D = (p: City3DProps) => {
         drive={!p.siteMode && !p.inCrane}
         visible={!p.inCrane}
         onNearCrane={p.onNearCrane}
+        onCell={p.onCell}
         kind={p.kind}
         material={p.material}
         onAim={p.onAim}
