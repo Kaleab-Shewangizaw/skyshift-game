@@ -18,7 +18,12 @@ import {
   disconnectRealtime,
 } from '@devvit/web/client';
 import { createRoot } from 'react-dom/client';
-import { dailyBlueprint, planAt, progressOf } from '../shared/blueprints';
+import {
+  dailyBlueprint,
+  fitToPlan,
+  planAt,
+  progressOf,
+} from '../shared/blueprints';
 import { parseLiveMessage, type LiveMessage } from '../shared/live';
 import {
   blockKey,
@@ -48,7 +53,9 @@ import {
   HAND_LEVELS,
   canDeliver,
   canPlace,
+  CELL,
   canRemove,
+  liftStops,
   cellTile,
   describePiece,
   deliveryTarget,
@@ -65,7 +72,13 @@ import { PlotCard } from './components/PlotCard';
 import { SitePanel } from './components/SitePanel';
 import { WorkerHud } from './components/WorkerHud';
 import { CraneHud } from './components/CraneHud';
-import { requestTeleport, useKeyboard } from './game/controls';
+import {
+  requestRide,
+  requestTeleport,
+  setRun,
+  useKeyboard,
+} from './game/controls';
+import { floorHeight } from './three/layout';
 import { monuments } from './game/monuments';
 import { applyPieceChange } from './game/livePiece';
 import { activeRemotes, myPosition, updateRemote } from './game/remote';
@@ -224,15 +237,36 @@ export const App = () => {
   );
 
   // Where the worker aims decides the rules: their own plot, someone else's, or today's build.
+  const dateKey = view?.dateKey;
+  const daily = useMemo(
+    () => (dateKey ? dailyBlueprint(dateKey) : null),
+    [dateKey]
+  );
+
   const aim = useMemo((): Aim | null => {
     if (!target || !pieces || !pads || !pallets) return null;
-    const key = slotKey(target.spec);
     const owner = plotAt(plots, target.spec);
+    // Whichever plan applies here guides the piece: its direction, material,
+    // and elevator shafts stacking up from the ground.
+    const ownerLevel = owner ? currentLevel(owner) : null;
+    const bp =
+      owner && ownerLevel
+        ? tilesNeeded(owner).length === 0
+          ? ownerLevel.blueprint(owner.block)
+          : null
+        : owner
+          ? null
+          : daily;
+    const spec = bp
+      ? fitToPlan(bp, owner ? owner.pieces : pieces, target.spec)
+      : target.spec;
+    const key = slotKey(spec);
     if (owner && owner !== myPlot) {
       // On a neighbor's plot you can add pieces from their plan.
-      const r = placeOnPlot(owner, target.spec, 0, me);
+      const r = placeOnPlot(owner, spec, 0, me);
       return {
         ...target,
+        spec,
         where: 'help',
         block: owner.block,
         state: r.ok ? 'ok' : 'bad',
@@ -243,10 +277,11 @@ export const App = () => {
       const there = myPlot.pieces.some((p) => slotKey(p) === key);
       const c = there
         ? removeFromPlot(myPlot, key)
-        : canPlace(myPlot.pieces, myPlot.tiles, target.spec, null);
+        : canPlace(myPlot.pieces, myPlot.tiles, spec, null);
       const state: GhostState = !c.ok ? 'bad' : there ? 'remove' : 'ok';
       return {
         ...target,
+        spec,
         where: 'plot',
         state,
         reason: c.ok ? null : c.reason,
@@ -256,17 +291,18 @@ export const App = () => {
     // Aiming at an existing piece offers to take it down; otherwise to place one.
     const c = there
       ? canRemove(pieces, key, me, pallets)
-      : canPlace(pieces, pads, target.spec, pallets);
+      : canPlace(pieces, pads, spec, pallets);
     const state: GhostState = !c.ok ? 'bad' : there ? 'remove' : 'ok';
-    return { ...target, where: 'daily', state, reason: c.ok ? null : c.reason };
-  }, [target, pieces, pads, pallets, me, plots, myPlot]);
+    return {
+      ...target,
+      spec,
+      where: 'daily',
+      state,
+      reason: c.ok ? null : c.reason,
+    };
+  }, [target, pieces, pads, pallets, me, plots, myPlot, daily]);
 
   // ---- Today's community blueprint ----
-  const dateKey = view?.dateKey;
-  const daily = useMemo(
-    () => (dateKey ? dailyBlueprint(dateKey) : null),
-    [dateKey]
-  );
   const progress = useMemo(
     () => (daily && pieces ? progressOf(daily, pieces) : null),
     [daily, pieces]
@@ -333,6 +369,27 @@ export const App = () => {
     ],
     [progress, myPlot, plotProgress, visiting, visitProgress]
   );
+
+  // ---- Elevators: stand in a shaft and ride to the next floor ----
+  // Elevators: where the shaft the worker stands in can take them.
+  const stops = useMemo(
+    () =>
+      cell && world
+        ? liftStops(world.pieces, cell.x, cell.z, cell.level)
+        : { up: null, down: null },
+    [cell, world]
+  );
+  const lift = { up: stops.up !== null, down: stops.down !== null };
+  const rideLift = (dir: 1 | -1) => {
+    const to = dir > 0 ? stops.up : stops.down;
+    if (!cell || to === null) return;
+    requestRide(
+      cell.x * CELL + CELL / 2,
+      floorHeight(to),
+      cell.z * CELL + CELL / 2
+    );
+  };
+  const [running, setRunning] = useState(false);
 
   // Steel left on the worker's floor, once floors need crane deliveries.
   const steel = steelOf(kind);
@@ -786,6 +843,12 @@ export const App = () => {
     blockOf(cell.x) === myPlot.block.bx &&
     blockOf(cell.z) === myPlot.block.bz;
 
+  // What the plan where you stand still needs, piece by piece (hotbar badges).
+  const here = visiting ? visitProgress : onMyPlot ? plotProgress : progress;
+  const planLeft: Partial<Record<PieceKind, number>> = {};
+  for (const q of here?.missing ?? [])
+    planLeft[q.kind] = (planLeft[q.kind] ?? 0) + 1;
+
   return (
     <div
       ref={root}
@@ -1026,11 +1089,19 @@ export const App = () => {
                 setMaterial={setMaterial}
                 steelLeft={steelLeft}
                 planNote={planNote}
+                planLeft={planLeft}
                 aim={aim}
                 busy={busy}
                 onAct={act}
                 nearCrane={nearCrane}
                 nearPallets={nearPallets}
+                lift={lift}
+                onLift={rideLift}
+                running={running}
+                onRun={(on) => {
+                  setRunning(on);
+                  setRun(on);
+                }}
                 onReturn={sendBack}
                 onEnterCrane={() => setInCrane(true)}
               />

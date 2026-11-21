@@ -85,8 +85,9 @@ export const pieceBox = (p: PieceSpec): Box => {
         ? { pos: [cx, y, p.z * CELL], size: [WALL_LEN, WALL_H, WALL_T] }
         : { pos: [p.x * CELL, y, cz], size: [WALL_T, WALL_H, WALL_LEN] };
     }
-    case 'stairs': {
-      // The whole flight, from this floor up to the top of the slab above.
+    case 'stairs':
+    case 'lift': {
+      // The whole flight or shaft, from this floor up to the top of the slab above.
       const h = STOREY + SLAB_H;
       return { pos: [cx, floor + h / 2, cz], size: [CELL, h, CELL] };
     }
@@ -147,6 +148,7 @@ export const pieceBoxes = (p: PieceSpec): Box[] => {
       pos: leanPath(p, (i + 0.5) / LEAN_SEGMENTS),
       size: [COLUMN, STOREY / LEAN_SEGMENTS + 0.05, COLUMN],
     }));
+  if (p.kind === 'lift') return liftWalls(p);
   if (p.kind !== 'stairs') return [pieceBox(p)];
   const floor = PAD_TOP + p.level * STOREY;
   const rise = (STOREY + SLAB_H) / STAIR_STEPS;
@@ -169,4 +171,97 @@ export const pieceBoxes = (p: PieceSpec): Box[] => {
           size: [STAIR_WIDTH, h, depth],
         };
   });
+};
+
+/** Height of the floor surface of storey `level` (the ground pad, or a slab's top). */
+export const floorHeight = (level: number): number =>
+  PAD_TOP + level * STOREY + (level > 0 ? SLAB_H : 0);
+
+const RAIL_H = 1.05;
+
+/**
+ * Handrails for a flight of stairs: both sides always, and across the top
+ * when there's no floor to step onto (`openTop`), so nobody walks off the end.
+ */
+export const stairRails = (p: PieceSpec, openTop: boolean): Box[] => {
+  const floor = PAD_TOP + p.level * STOREY;
+  const top = floor + STOREY + SLAB_H;
+  const x0 = p.x * CELL;
+  const z0 = p.z * CELL;
+  const alongX = p.dir === 'x' || p.dir === '-x';
+  const up = p.dir === 'x' || p.dir === 'z';
+  const side = STAIR_WIDTH / 2 + 0.06;
+  // Side rails: full storey tall, so the flight is a safe channel.
+  const h = STOREY + SLAB_H + RAIL_H;
+  const rails: Box[] = [-side, side].map((o) =>
+    alongX
+      ? {
+          pos: [x0 + CELL / 2, floor + h / 2, z0 + CELL / 2 + o],
+          size: [CELL, h, 0.08],
+        }
+      : {
+          pos: [x0 + CELL / 2 + o, floor + h / 2, z0 + CELL / 2],
+          size: [0.08, h, CELL],
+        }
+  );
+  if (openTop) {
+    const end = up ? CELL - 0.04 : 0.04;
+    rails.push(
+      alongX
+        ? {
+            pos: [x0 + end, top + RAIL_H / 2, z0 + CELL / 2],
+            size: [0.08, RAIL_H, STAIR_WIDTH + 0.2],
+          }
+        : {
+            pos: [x0 + CELL / 2, top + RAIL_H / 2, z0 + end],
+            size: [STAIR_WIDTH + 0.2, RAIL_H, 0.08],
+          }
+    );
+  }
+  return rails;
+};
+
+/** Is there no floor to step onto at the top of this flight of stairs? */
+export const stairTopOpen = (
+  pieces: readonly PieceSpec[],
+  p: PieceSpec
+): boolean => {
+  const [dx, dz] = DIR_OFFSET[p.dir ?? 'x'];
+  const nx = p.x + dx;
+  const nz = p.z + dz;
+  return !pieces.some(
+    (q) =>
+      (q.kind === 'slab' || q.kind === 'lift') &&
+      q.x === nx &&
+      q.z === nz &&
+      q.level === p.level
+  );
+};
+
+/** Glass of an elevator shaft: three walls, with the door side (`dir`) left open. */
+export const liftWalls = (p: PieceSpec): Box[] => {
+  const floor = PAD_TOP + p.level * STOREY;
+  const cx = p.x * CELL + CELL / 2;
+  const cz = p.z * CELL + CELL / 2;
+  const e = CELL / 2 - 0.12;
+  const y = floor + STOREY / 2;
+  const sides: { dir: string; box: Box }[] = [
+    {
+      dir: 'x',
+      box: { pos: [cx + e, y, cz], size: [0.06, STOREY, CELL - 0.24] },
+    },
+    {
+      dir: '-x',
+      box: { pos: [cx - e, y, cz], size: [0.06, STOREY, CELL - 0.24] },
+    },
+    {
+      dir: 'z',
+      box: { pos: [cx, y, cz + e], size: [CELL - 0.24, STOREY, 0.06] },
+    },
+    {
+      dir: '-z',
+      box: { pos: [cx, y, cz - e], size: [CELL - 0.24, STOREY, 0.06] },
+    },
+  ];
+  return sides.filter((q) => q.dir !== p.dir).map((q) => q.box);
 };

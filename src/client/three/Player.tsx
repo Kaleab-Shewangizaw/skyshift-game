@@ -12,7 +12,7 @@ import {
   type PieceSpec,
   type WallMaterial,
 } from '../../shared/structure';
-import { controls, takeJump, takeTeleport } from '../game/controls';
+import { controls, takeJump, takeRide, takeTeleport } from '../game/controls';
 import { setMyPosition } from '../game/remote';
 import { CRANE_POS, PAD_TOP } from './layout';
 import { step, storeyOf, type Body, type Collider } from './physics';
@@ -38,6 +38,8 @@ type Props = {
 /** How far in front of the worker the build spot is (m). */
 const REACH = 1.7;
 const EYE = 1.5;
+/** Elevator speed (m/s): about two seconds a floor. */
+const LIFT_SPEED = 2.4;
 
 /**
  * The player's construction worker, driven by the joystick or keyboard, with
@@ -78,6 +80,8 @@ export const Player = ({
   const lastAim = useRef('');
   const nearCrane = useRef(false);
   const lastCell = useRef('');
+  /** An elevator ride in progress. */
+  const riding = useRef<{ x: number; y: number; z: number } | null>(null);
   // Camera offset (from the worker) to ease toward, and the one to come back to.
   const wantOffset = useRef<THREE.Vector3 | null>(null);
   const savedOffset = useRef<THREE.Vector3 | null>(null);
@@ -158,16 +162,34 @@ export const Player = ({
         b.y = 12;
         b.vy = 0;
       }
-      step(
-        b,
-        {
-          moveX: fx * sy - fz * sx,
-          moveZ: fz * sy + fx * sx,
-          jump: takeJump(),
-        },
-        colliders,
-        dt
-      );
+      const newRide = takeRide();
+      if (newRide) riding.current = newRide;
+      const r = riding.current;
+      if (r) {
+        // In the elevator: slide to the middle of the shaft, then rise or sink
+        // to the landing. No gravity, no walking until we arrive.
+        b.x += (r.x - b.x) * Math.min(1, dt * 8);
+        b.z += (r.z - b.z) * Math.min(1, dt * 8);
+        const dy = r.y - b.y;
+        b.y += Math.sign(dy) * Math.min(Math.abs(dy), LIFT_SPEED * dt);
+        b.vy = 0;
+        b.grounded = true;
+        if (Math.abs(r.y - b.y) < 0.01) {
+          b.y = r.y;
+          riding.current = null;
+        }
+      } else
+        step(
+          b,
+          {
+            moveX: fx * sy - fz * sx,
+            moveZ: fz * sy + fx * sx,
+            jump: takeJump(),
+            run: controls.run || controls.keyRun,
+          },
+          colliders,
+          dt
+        );
       // The camera rides along with the worker.
       camera.position.add(new THREE.Vector3(b.x - px, b.y - py, b.z - pz));
       c.target.set(b.x, b.y + EYE, b.z);

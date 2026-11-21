@@ -12,6 +12,7 @@ import {
   buildableCells,
   canPlace,
   deliveryTarget,
+  liftStops,
   steelOnFloor,
   cellTile,
   slotKey,
@@ -453,4 +454,41 @@ void test('above floor 2, leaning columns use column steel and braces use beams'
   assert.equal(steelOnFloor(s.pallets, 'column', 2), 6);
   s = place(s, piece('brace', 3, 0, 2, 'x'));
   assert.equal(steelOnFloor(s.pallets, 'beam', 2), 15);
+});
+
+void test('elevators pass through floor slabs and stop at each one', () => {
+  const at = (...ps: PieceSpec[]) => ps.map((p) => ({ ...p, by: 'x', at: 1 }));
+  // A shaft up storeys 0..3 in cell (3,0), with floors at the tops of storeys 1 and 3.
+  const shaft = at(
+    piece('lift', 3, 0, 0, 'x'),
+    piece('lift', 3, 0, 1, 'x'),
+    piece('lift', 3, 0, 2, 'x'),
+    piece('lift', 3, 0, 3, 'x'),
+    piece('slab', 3, 0, 1),
+    piece('slab', 3, 0, 3)
+  );
+  assert.deepEqual(liftStops(shaft, 3, 0, 0), { up: 2, down: null });
+  assert.deepEqual(liftStops(shaft, 3, 0, 2), { up: 4, down: 0 });
+  assert.deepEqual(liftStops(shaft, 3, 0, 4), { up: null, down: 2 });
+  assert.deepEqual(liftStops(shaft, 4, 0, 0), { up: null, down: null }); // not in a shaft
+  // A slab and an elevator share a cell happily now.
+  const pads = withPad().pads;
+  assert.equal(
+    canPlace(at(piece('lift', 3, 0, 0, 'x')), pads, piece('slab', 3, 0, 0)).ok,
+    false
+  ); // slab needs support
+  assert.equal(
+    canPlace(
+      at(
+        piece('lift', 3, 0, 0, 'x'),
+        piece('wall', 3, 0, 0, 'x', 'brick'),
+        piece('wall', 3, 1, 0, 'x', 'brick')
+      ),
+      pads,
+      piece('slab', 3, 0, 0)
+    ).ok,
+    true
+  );
+  // The door faces back toward the worker who places it.
+  assert.equal(snapToGrid('lift', 10, 1, 0, null, 'x').dir, '-x');
 });

@@ -17,6 +17,9 @@ export type Controls = {
   /** Crane hoist from the ▲▼ buttons and R/F keys: 1 up, -1 down. */
   hoist: number;
   keyHoist: number;
+  /** Run instead of walk: the 🏃 toggle, or Shift held. */
+  run: boolean;
+  keyRun: boolean;
 };
 
 /** The one set of live controls for this page. */
@@ -28,6 +31,8 @@ export const controls: Controls = {
   jump: false,
   hoist: 0,
   keyHoist: 0,
+  run: false,
+  keyRun: false,
 };
 
 const FORWARD = new Set(['KeyW', 'ArrowUp']);
@@ -37,7 +42,7 @@ const RIGHT = new Set(['KeyD', 'ArrowRight']);
 const UP = new Set(['KeyR', 'PageUp']);
 const DOWN = new Set(['KeyF', 'PageDown']);
 
-/** WASD / arrows to walk or steer the crane, Space to jump, R/F to hoist. */
+/** WASD / arrows to walk or steer the crane, Shift to run, Space to jump, R/F to hoist. */
 export const useKeyboard = (enabled: boolean) => {
   useEffect(() => {
     if (!enabled) return;
@@ -47,6 +52,7 @@ export const useKeyboard = (enabled: boolean) => {
       controls.keyY = (has(FORWARD) ? 1 : 0) - (has(BACK) ? 1 : 0);
       controls.keyX = (has(RIGHT) ? 1 : 0) - (has(LEFT) ? 1 : 0);
       controls.keyHoist = (has(UP) ? 1 : 0) - (has(DOWN) ? 1 : 0);
+      controls.keyRun = down.has('ShiftLeft') || down.has('ShiftRight');
     };
     const onDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
@@ -105,4 +111,22 @@ export const takeTeleport = (): { x: number; z: number } | null => {
   const t = teleport;
   teleport = null;
   return t;
+};
+
+export const setRun = (on: boolean) => {
+  controls.run = on;
+};
+
+/** An elevator ride the worker should take: glide to (x, z) and up or down to height y. */
+let ride: { x: number; y: number; z: number } | null = null;
+
+export const requestRide = (x: number, y: number, z: number) => {
+  ride = { x, y, z };
+};
+
+/** The pending ride, once; clears it. */
+export const takeRide = (): { x: number; y: number; z: number } | null => {
+  const r = ride;
+  ride = null;
+  return r;
 };

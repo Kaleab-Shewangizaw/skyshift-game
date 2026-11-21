@@ -1,6 +1,8 @@
 import { Canvas, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { QUALITY } from './quality';
 import type { Challenge } from '../../shared/challenge';
 import type { Tile } from '../../shared/city';
 import type { SiteWork, TowerState } from '../../shared/rules';
@@ -70,9 +72,19 @@ export const City3D = (p: City3DProps) => {
   );
   return (
     <Canvas
-      shadows="soft"
-      dpr={[1, 1.75]}
+      shadows={QUALITY.softShadows ? 'soft' : true}
+      dpr={QUALITY.dpr}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
+      onCreated={({ gl, scene }) => {
+        // Soft studio reflections, so steel, glass and car paint actually shine.
+        const pmrem = new THREE.PMREMGenerator(gl);
+        scene.environment = pmrem.fromScene(
+          new RoomEnvironment(),
+          0.04
+        ).texture;
+        scene.environmentIntensity = 0.35;
+        pmrem.dispose();
+      }}
       // A near plane at 0.6 m (not 0.3) gives the depth buffer 2× the precision,
       // which keeps distant faces from shimmering through each other.
       camera={{ fov: FOV, near: 0.6, far: 1500, position: [0, 8, 14] }}
@@ -206,7 +218,7 @@ const Lights = ({ night }: { night: boolean }) => {
         intensity={night ? 0.5 : 2.4}
         color={night ? '#aab8ff' : '#fff1d6'}
         castShadow
-        shadow-mapSize={[1536, 1536]}
+        shadow-mapSize={[QUALITY.shadowMap, QUALITY.shadowMap]}
       />
       {!night && (
         <mesh position={[240, 260, -420]}>

@@ -1,6 +1,7 @@
 import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
   CITY_RADIUS,
   FACADE_COLORS,
@@ -16,6 +17,7 @@ import {
 } from '../../shared/city';
 import { makeRng } from '../../shared/rng';
 import { PAD_TOP } from './layout';
+import { QUALITY } from './quality';
 import type { SiteWork } from '../../shared/rules';
 import {
   dirtTexture,
@@ -109,15 +111,106 @@ const BuildingMesh = ({
         castShadow={detail}
         receiveShadow
       />
-      <mesh position={[0, t.height + 0.25, 0]} material={ROOF}>
+      {/* roof slab with a low parapet all round */}
+      <mesh position={[0, t.height + 0.12, 0]} material={ROOF} receiveShadow>
+        <boxGeometry args={[BUILDING_FOOTPRINT, 0.24, BUILDING_FOOTPRINT]} />
+      </mesh>
+      {PARAPETS.map((q) => (
+        <mesh
+          key={q.key}
+          // Sits on top of the roof slab (no overlap, so no flickering edge).
+          position={[q.x, t.height + 0.24 + 0.3, q.z]}
+          material={PARAPET}
+          castShadow={detail}
+        >
+          <boxGeometry args={q.size} />
+        </mesh>
+      ))}
+      {/* ground-floor shop band in a darker tone */}
+      <mesh position={[0, 1.6, 0]} material={SHOPFRONT}>
         <boxGeometry
-          args={[BUILDING_FOOTPRINT + 0.4, 0.5, BUILDING_FOOTPRINT + 0.4]}
+          args={[BUILDING_FOOTPRINT + 0.06, 3.2, BUILDING_FOOTPRINT + 0.06]}
         />
       </mesh>
-      {detail && (
-        <mesh position={[1.8, t.height + 1, -1.4]} castShadow material={ROOF}>
-          <boxGeometry args={[2.6, 2, 2.6]} />
-        </mesh>
+      {detail && <RoofKit seed={t.seed} top={t.height} />}
+    </group>
+  );
+};
+
+const PARAPET = new THREE.MeshStandardMaterial({
+  color: '#9b968f',
+  roughness: 0.85,
+});
+const SHOPFRONT = new THREE.MeshStandardMaterial({
+  color: '#3a4350',
+  metalness: 0.3,
+  roughness: 0.35,
+});
+const P = BUILDING_FOOTPRINT / 2 - 0.12;
+const PARAPETS: {
+  key: string;
+  x: number;
+  z: number;
+  size: [number, number, number];
+}[] = [
+  { key: 'n', x: 0, z: -P, size: [BUILDING_FOOTPRINT, 0.6, 0.24] },
+  { key: 's', x: 0, z: P, size: [BUILDING_FOOTPRINT, 0.6, 0.24] },
+  { key: 'w', x: -P, z: 0, size: [0.24, 0.6, BUILDING_FOOTPRINT - 0.48] },
+  { key: 'e', x: P, z: 0, size: [0.24, 0.6, BUILDING_FOOTPRINT - 0.48] },
+];
+const STEEL_GREY = new THREE.MeshStandardMaterial({
+  color: '#b8bcc2',
+  metalness: 0.6,
+  roughness: 0.35,
+});
+const TANK_WOOD = new THREE.MeshStandardMaterial({
+  color: '#8a5a3c',
+  roughness: 0.8,
+});
+
+/** Rooftop clutter: an AC unit or two, and sometimes a water tank on legs. */
+const RoofKit = ({ seed, top }: { seed: number; top: number }) => {
+  const rng = makeRng(seed ^ 0xa11);
+  const units = 1 + Math.floor(rng() * 2);
+  const tank = rng() < 0.45;
+  const spots: [number, number][] = [
+    [-2, -2],
+    [2, 1.5],
+    [-1.5, 2.2],
+  ];
+  return (
+    <group position={[0, top + 0.24, 0]}>
+      {spots.slice(0, units).map(([x, z]) => (
+        <group key={`${x},${z}`} position={[x, 0, z]}>
+          <mesh position={[0, 0.45, 0]} material={STEEL_GREY} castShadow>
+            <boxGeometry args={[1.6, 0.9, 1.1]} />
+          </mesh>
+          <mesh position={[0, 0.92, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[0.38, 16]} />
+            <meshStandardMaterial color="#5b6068" />
+          </mesh>
+        </group>
+      ))}
+      {tank && (
+        <group position={[2.2, 0, -2.2]}>
+          {[-0.5, 0.5].map((x) =>
+            [-0.5, 0.5].map((z) => (
+              <mesh
+                key={`${x}${z}`}
+                position={[x, 0.6, z]}
+                material={STEEL_GREY}
+              >
+                <boxGeometry args={[0.08, 1.2, 0.08]} />
+              </mesh>
+            ))
+          )}
+          <mesh position={[0, 1.85, 0]} material={TANK_WOOD} castShadow>
+            <cylinderGeometry args={[0.85, 0.85, 1.4, 16]} />
+          </mesh>
+          <mesh position={[0, 2.75, 0]} material={TANK_WOOD} castShadow>
+            <coneGeometry args={[0.92, 0.45, 16]} />
+          </mesh>
+        </group>
       )}
     </group>
   );
@@ -342,7 +435,7 @@ const Traffic = ({
   const half = 2 * TILE;
   const cars = useMemo(
     () =>
-      CAR_COLORS.map((color, i) => ({
+      CAR_COLORS.slice(0, QUALITY.cars).map((color, i) => ({
         color,
         offset: (i / CAR_COLORS.length) * half * 8,
         speed: 7 + (i % 3) * 1.5,
@@ -388,39 +481,160 @@ const Traffic = ({
             refs.current[i] = el;
           }}
         >
-          <mesh position={[0, 0.75, 0]} castShadow>
-            <boxGeometry args={[4, 1, 1.9]} />
-            <meshStandardMaterial
-              color={car.color}
-              roughness={0.4}
-              metalness={0.2}
-            />
-          </mesh>
-          <mesh position={[-0.2, 1.55, 0]} castShadow>
-            <boxGeometry args={[2.1, 0.75, 1.7]} />
-            <meshStandardMaterial color="#cfe8ff" roughness={0.2} />
-          </mesh>
-          {[-1.3, 1.3].map((wx) =>
-            [-0.95, 0.95].map((wz) => (
-              <mesh
-                key={`${wx}${wz}`}
-                position={[wx, 0.35, wz]}
-                rotation={[Math.PI / 2, 0, 0]}
-              >
-                <cylinderGeometry args={[0.38, 0.38, 0.25, 10]} />
-                <meshStandardMaterial color="#222" />
-              </mesh>
-            ))
-          )}
-          <mesh position={[2.02, 0.85, 0]}>
-            <boxGeometry args={[0.05, 0.3, 1.5]} />
-            <meshStandardMaterial
-              color="#fff8d0"
-              emissive="#fff3b0"
-              emissiveIntensity={night ? 3 : 0.3}
-            />
-          </mesh>
+          <Car color={car.color} style={i % 3} night={night} />
         </group>
+      ))}
+    </group>
+  );
+};
+
+// ---------- Cars ----------
+
+type CarStyle = {
+  len: number;
+  h: number;
+  cabin: number;
+  cabinH: number;
+  back: number;
+};
+/** Hatchback, sedan, van. */
+const CAR_STYLES: CarStyle[] = [
+  { len: 3.8, h: 0.7, cabin: 2.0, cabinH: 0.72, back: -0.35 },
+  { len: 4.4, h: 0.62, cabin: 2.1, cabinH: 0.66, back: -0.15 },
+  { len: 4.6, h: 1.0, cabin: 3.3, cabinH: 0.85, back: -0.45 },
+];
+
+const carGeometries = CAR_STYLES.map((st) => ({
+  body: new RoundedBoxGeometry(st.len, st.h, 1.9, 3, 0.22),
+  cabin: new RoundedBoxGeometry(st.cabin, st.cabinH, 1.72, 3, 0.2),
+  bumper: new RoundedBoxGeometry(0.22, 0.28, 1.95, 2, 0.08),
+}));
+const WHEEL = new THREE.CylinderGeometry(0.4, 0.4, 0.28, 18);
+const RIM = new THREE.CylinderGeometry(0.22, 0.22, 0.3, 12);
+const LAMP = new THREE.BoxGeometry(0.06, 0.16, 0.38);
+const MIRROR = new THREE.BoxGeometry(0.16, 0.12, 0.08);
+const GLASS = new THREE.MeshStandardMaterial({
+  color: '#1d2a38',
+  metalness: 0.6,
+  roughness: 0.08,
+});
+const TIRE = new THREE.MeshStandardMaterial({
+  color: '#1b1b1d',
+  roughness: 0.9,
+});
+const CHROME = new THREE.MeshStandardMaterial({
+  color: '#d8dde3',
+  metalness: 0.9,
+  roughness: 0.25,
+});
+const TRIM = new THREE.MeshStandardMaterial({
+  color: '#2a2c31',
+  roughness: 0.6,
+});
+
+/** A little rounded car: painted body, dark glass cabin, wheels with rims, lights. */
+const Car = ({
+  color,
+  style,
+  night,
+}: {
+  color: string;
+  style: number;
+  night: boolean;
+}) => {
+  const st = CAR_STYLES[style] ?? CAR_STYLES[0];
+  const g = carGeometries[style] ?? carGeometries[0];
+  const paint = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.35,
+        roughness: 0.32,
+      }),
+    [color]
+  );
+  if (!st || !g) return null;
+  const bodyY = 0.42 + st.h / 2;
+  const roofY = 0.42 + st.h + st.cabinH / 2 - 0.08;
+  const front = st.len / 2;
+  return (
+    <group>
+      <mesh
+        geometry={g.body}
+        material={paint}
+        position={[0, bodyY, 0]}
+        castShadow
+      />
+      <mesh
+        geometry={g.cabin}
+        material={GLASS}
+        position={[st.back, roofY, 0]}
+        castShadow
+      />
+      {/* roof panel in body color over the glass */}
+      <mesh
+        position={[st.back, roofY + st.cabinH / 2 - 0.04, 0]}
+        material={paint}
+      >
+        <boxGeometry args={[st.cabin - 0.3, 0.08, 1.6]} />
+      </mesh>
+      {[front, -front].map((x) => (
+        <mesh
+          key={x}
+          geometry={g.bumper}
+          material={TRIM}
+          position={[x, 0.55, 0]}
+        />
+      ))}
+      {[-1, 1].map((sx) =>
+        [-1, 1].map((sz) => (
+          <group
+            key={`${sx}${sz}`}
+            position={[sx * (front - 0.8), 0.4, sz * 0.88]}
+            rotation={[Math.PI / 2, 0, 0]}
+          >
+            <mesh geometry={WHEEL} material={TIRE} castShadow />
+            <mesh geometry={RIM} material={CHROME} />
+          </group>
+        ))
+      )}
+      {[-0.6, 0.6].map((z) => (
+        <mesh
+          key={`h${z}`}
+          geometry={LAMP}
+          position={[front + 0.01, bodyY + 0.05, z]}
+        >
+          <meshStandardMaterial
+            color="#fff8d0"
+            emissive="#fff3b0"
+            emissiveIntensity={night ? 3 : 0.4}
+          />
+        </mesh>
+      ))}
+      {[-0.65, 0.65].map((z) => (
+        <mesh
+          key={`t${z}`}
+          geometry={LAMP}
+          position={[-front - 0.01, bodyY + 0.05, z]}
+        >
+          <meshStandardMaterial
+            color="#c21d1d"
+            emissive="#ff2a2a"
+            emissiveIntensity={night ? 2 : 0.35}
+          />
+        </mesh>
+      ))}
+      {[-1, 1].map((sz) => (
+        <mesh
+          key={`m${sz}`}
+          geometry={MIRROR}
+          material={paint}
+          position={[
+            st.back + st.cabin / 2 - 0.05,
+            bodyY + st.h / 2 + 0.05,
+            sz * 1.0,
+          ]}
+        />
       ))}
     </group>
   );
@@ -430,7 +644,7 @@ const Clouds = ({ wind }: { wind: number }) => {
   const group = useRef<THREE.Group>(null);
   const clouds = useMemo(() => {
     const rng = makeRng(99);
-    return Array.from({ length: 9 }, () => ({
+    return Array.from({ length: QUALITY.clouds }, () => ({
       x: (rng() - 0.5) * 300,
       y: 80 + rng() * 30,
       z: (rng() - 0.5) * 300,

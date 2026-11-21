@@ -5,6 +5,7 @@ import {
   cottage,
   dailyBlueprint,
   dayStart,
+  fitToPlan,
   house,
   latticeTower,
   pavilion,
@@ -96,4 +97,30 @@ void test('the daily blueprint is fixed per day and its pads come poured', () =>
   const start = dayStart('2026-11-21');
   assert.deepEqual(start.pads, blueprintTiles(dailyBlueprint('2026-11-21')));
   assert.equal(start.pieces.length, 0);
+});
+
+void test('aiming at the plan takes its direction and material, and stacks elevator shafts', () => {
+  const bp = watchtower(-5, -1);
+  const shaft = bp.pieces.filter((p) => p.kind === 'lift');
+  const base = shaft[0];
+  assert.ok(base && shaft.length === 5);
+  // Facing the "wrong" way: the door still comes out as planned.
+  const fitted = fitToPlan(bp, [], { ...base, dir: '-z' });
+  assert.equal(fitted.dir, base.dir);
+  // Standing at the foot of the shaft: each Place goes one storey higher.
+  const placed = [{ ...base, by: 'x', at: 1 }];
+  assert.equal(fitToPlan(bp, placed, base).level, 1);
+  const two = [...placed, { ...base, level: 1, by: 'x', at: 2 }];
+  assert.equal(fitToPlan(bp, two, base).level, 2);
+  // A wall aimed with the wrong material takes the plan's.
+  const cot = cottage(0, 0, 'stone');
+  const wall = cot.pieces[0];
+  assert.ok(wall);
+  assert.equal(
+    fitToPlan(cot, [], { ...wall, material: 'glass' }).material,
+    'stone'
+  );
+  // Off the plan, nothing changes.
+  const off = { ...wall, x: wall.x + 40 };
+  assert.deepEqual(fitToPlan(cot, [], off), off);
 });

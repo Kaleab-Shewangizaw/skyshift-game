@@ -3,6 +3,7 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import {
   CELL,
+  DIR_OFFSET,
   STOREY,
   buildableCells,
   slotKey,
@@ -20,6 +21,9 @@ import {
   SLAB_H,
   WALL_LEN,
   pieceBox,
+  stairRails,
+  stairTopOpen,
+  type Box,
 } from './layout';
 import { lookOf, partsFor, pieceTransform, type Part } from './pieceLooks';
 
@@ -180,6 +184,112 @@ const PlanGhosts = ({ plan }: { plan: readonly PieceSpec[] }) => {
   );
 };
 
+let liftSignTexture: THREE.CanvasTexture | null = null;
+/** A lit yellow "🛗 LIFT" sign, drawn once. */
+const getLiftSign = (): THREE.CanvasTexture => {
+  if (liftSignTexture) return liftSignTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#ffc21a';
+    ctx.strokeStyle = '#3b2a1a';
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 240, 112, 28);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#3b2a1a';
+    ctx.font = 'bold 64px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🛗 LIFT', 128, 68);
+  }
+  liftSignTexture = new THREE.CanvasTexture(canvas);
+  liftSignTexture.colorSpace = THREE.SRGBColorSpace;
+  return liftSignTexture;
+};
+
+/** A sign over every elevator door, on every floor, so shafts are easy to find. */
+const LiftSigns = ({ pieces }: { pieces: readonly Piece[] }) => {
+  const signs = useMemo(
+    () =>
+      pieces
+        .filter((p) => p.kind === 'lift')
+        .map((p) => {
+          const [dx, dz] = DIR_OFFSET[p.dir ?? 'x'];
+          return {
+            key: slotKey(p),
+            pos: [
+              p.x * CELL + CELL / 2 + dx * (CELL / 2 + 0.05),
+              PAD_TOP + p.level * STOREY + STOREY - 0.7,
+              p.z * CELL + CELL / 2 + dz * (CELL / 2 + 0.05),
+            ] satisfies [number, number, number],
+          };
+        }),
+    [pieces]
+  );
+  return (
+    <>
+      {signs.map((q) => (
+        <sprite key={q.key} position={q.pos} scale={[1.3, 0.65, 1]}>
+          <spriteMaterial map={getLiftSign()} toneMapped={false} />
+        </sprite>
+      ))}
+    </>
+  );
+};
+
+const GUARD_MATERIAL = new THREE.MeshStandardMaterial({
+  color: '#e3a234',
+  metalness: 0.4,
+  roughness: 0.45,
+});
+
+/** A guard rail across the top of any flight of stairs with no floor beyond it. */
+const StairGuards = ({ pieces }: { pieces: readonly Piece[] }) => {
+  const guards = useMemo(
+    () =>
+      pieces
+        .filter((p) => p.kind === 'stairs' && stairTopOpen(pieces, p))
+        .map((p) => stairRails(p, true).at(-1))
+        .filter((b): b is Box => b !== undefined),
+    [pieces]
+  );
+  return (
+    <>
+      {guards.map((b) => (
+        <group key={b.pos.join(',')} position={b.pos}>
+          {/* top bar, middle bar and the two end posts */}
+          {[0.5, 0].map((dy) => (
+            <mesh
+              key={dy}
+              position={[0, (dy * b.size[1]) / 1 - (dy ? 0.03 : 0), 0]}
+              material={GUARD_MATERIAL}
+            >
+              <boxGeometry args={[b.size[0], 0.06, b.size[2]]} />
+            </mesh>
+          ))}
+          {[-1, 1].map((k) => (
+            <mesh
+              key={k}
+              position={[
+                b.size[0] > b.size[2] ? (k * b.size[0]) / 2 : 0,
+                0,
+                b.size[2] > b.size[0] ? (k * b.size[2]) / 2 : 0,
+              ]}
+              material={GUARD_MATERIAL}
+            >
+              <boxGeometry args={[0.07, b.size[1], 0.07]} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+    </>
+  );
+};
+
 /** What the worker is aiming at: a free spot, a blocked one, or one of their own pieces. */
 export type GhostState = 'ok' | 'bad' | 'remove';
 
@@ -218,6 +328,8 @@ export const Structure = ({ pieces, plan, pads, pallets, build }: Props) => {
         <PieceGroup key={`${k}:${list.length}`} lookKey={k} pieces={list} />
       ))}
       <CornerPosts pieces={pieces} />
+      <StairGuards pieces={pieces} />
+      <LiftSigns pieces={pieces} />
       <PlanGhosts plan={plan} />
       {pallets.map((q) => (
         <PalletStack key={`${q.kind}:${q.x},${q.z},${q.level}`} pallet={q} />

@@ -20,6 +20,7 @@ const SHORT: Record<PieceKind, string> = {
   slab: 'Slab',
   wall: 'Wall',
   stairs: 'Stairs',
+  lift: 'Lift',
   lean: 'Lean',
   brace: 'Brace',
   arch: 'Arch',
@@ -35,6 +36,8 @@ type Props = {
   steelLeft: number | null;
   /** How the aimed spot relates to today's blueprint, if it's part of it. */
   planNote: string | null;
+  /** How many of each piece the plan here still needs. */
+  planLeft: Partial<Record<PieceKind, number>>;
   /** The spot in front of the worker, and whether it can be built on. */
   aim: {
     spec: PieceSpec;
@@ -44,6 +47,11 @@ type Props = {
   } | null;
   busy: boolean;
   onAct: () => void;
+  /** Standing in an elevator shaft: which way it can go. */
+  lift: { up: boolean; down: boolean };
+  onLift: (dir: 1 | -1) => void;
+  running: boolean;
+  onRun: (on: boolean) => void;
   /** Standing at the crane's foot: offer to climb into the cab. */
   nearCrane: boolean;
   onEnterCrane: () => void;
@@ -97,7 +105,7 @@ export const WorkerHud = (p: Props) => {
         </div>
       </div>
 
-      <div className="card grid grid-cols-5 gap-1 p-1.5">
+      <div className="card grid grid-cols-6 gap-1 p-1.5">
         {PIECE_KINDS.map((k) => {
           const on = k === p.kind;
           return (
@@ -109,11 +117,19 @@ export const WorkerHud = (p: Props) => {
             >
               <span className="text-lg leading-none">{PIECES[k].icon}</span>
               {SHORT[k]}
+              {(p.planLeft[k] ?? 0) > 0 && (
+                <span
+                  className="absolute -right-1 -top-1.5 min-w-[18px] rounded-full border-2 border-[#3b2a1a] bg-[#4fa8ff] px-1 text-center text-[10px] font-bold leading-[14px] text-white"
+                  title="Still needed by the plan"
+                >
+                  {p.planLeft[k]}
+                </span>
+              )}
             </button>
           );
         })}
         {p.kind === 'wall' && (
-          <div className="col-span-5 grid grid-cols-4 gap-1.5">
+          <div className="col-span-6 grid grid-cols-4 gap-1.5">
             {WALL_MATERIALS.map((m) => {
               const on = m === p.material;
               return (
@@ -148,6 +164,26 @@ export const WorkerHud = (p: Props) => {
               ↩ Send back {q.left} {q.kind}s
             </button>
           ))}
+          {(p.lift.up || p.lift.down) && (
+            <div className="pop-in flex gap-1.5">
+              <button
+                className="btn3d btn-blue h-12 px-3 text-[15px] font-bold text-outline-sm"
+                disabled={!p.lift.down}
+                aria-label="Elevator down"
+                onClick={() => p.onLift(-1)}
+              >
+                🛗 ▼
+              </button>
+              <button
+                className="btn3d btn-blue h-12 px-3 text-[15px] font-bold text-outline-sm"
+                disabled={!p.lift.up}
+                aria-label="Elevator up"
+                onClick={() => p.onLift(1)}
+              >
+                🛗 ▲
+              </button>
+            </div>
+          )}
           {p.nearCrane && (
             <button
               className="btn3d btn-blue shine pop-in px-3 py-2 text-[13px] font-bold text-outline-sm"
@@ -156,13 +192,24 @@ export const WorkerHud = (p: Props) => {
               🏗️ Enter crane
             </button>
           )}
-          <button
-            className="btn3d btn-cream h-12 w-12 rounded-full text-lg font-bold"
-            aria-label="Jump"
-            onClick={pressJump}
-          >
-            ⤒
-          </button>
+          <div className="flex gap-2">
+            <button
+              className={`btn3d h-12 w-12 rounded-full text-lg font-bold ${p.running ? 'btn-yellow' : 'btn-cream'}`}
+              aria-label="Run"
+              aria-pressed={p.running}
+              title="Run (or hold Shift)"
+              onClick={() => p.onRun(!p.running)}
+            >
+              🏃
+            </button>
+            <button
+              className="btn3d btn-cream h-12 w-12 rounded-full text-lg font-bold"
+              aria-label="Jump"
+              onClick={pressJump}
+            >
+              ⤒
+            </button>
+          </div>
           <button
             className={`btn3d shine min-w-[132px] px-4 py-3 text-lg font-bold uppercase text-outline-sm ${a?.state === 'remove' ? 'btn-red' : 'btn-green'}`}
             disabled={!a || a.state === 'bad' || p.busy}

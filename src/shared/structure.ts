@@ -31,6 +31,7 @@ export type PieceKind =
   | 'slab'
   | 'wall'
   | 'stairs'
+  | 'lift'
   | 'lean'
   | 'brace'
   | 'arch'
@@ -133,6 +134,13 @@ export const PIECES: Record<PieceKind, PieceInfo> = {
     weight: 2,
     capacity: 6,
   },
+  lift: {
+    name: 'Elevator',
+    icon: '🛗',
+    hint: 'A glass lift shaft through one floor; its door faces you. Stack one per floor in the same cell; it stops wherever a floor slab crosses it.',
+    weight: 2,
+    capacity: 8,
+  },
   lean: {
     name: 'Leaning column',
     icon: '📐',
@@ -184,6 +192,7 @@ export const PIECE_KINDS: PieceKind[] = [
   'slab',
   'wall',
   'stairs',
+  'lift',
   'lean',
   'brace',
   'arch',
@@ -199,7 +208,7 @@ export const WALL_MATERIALS: WallMaterial[] = [
 export const isEdgeKind = (k: PieceKind): boolean =>
   k === 'beam' || k === 'wall' || k === 'brace' || k === 'arch';
 export const isCellKind = (k: PieceKind): boolean =>
-  k === 'foundation' || k === 'slab' || k === 'stairs';
+  k === 'foundation' || k === 'slab' || k === 'stairs' || k === 'lift';
 /** Pieces that stand on a grid corner. */
 export const isNodeKind = (k: PieceKind): boolean =>
   k === 'column' || k === 'lean' || k === 'spire';
@@ -292,7 +301,7 @@ export const isWellFormed = (p: PieceSpec): boolean =>
   p.level <= MAX_LEVEL &&
   (isEdgeKind(p.kind)
     ? p.dir === 'x' || p.dir === 'z'
-    : p.kind === 'stairs'
+    : p.kind === 'stairs' || p.kind === 'lift'
       ? p.dir !== null && AXIS_DIRS.includes(p.dir)
       : p.kind === 'lean'
         ? p.dir !== null
@@ -352,15 +361,26 @@ const supportProblem = (idx: Index, p: PieceSpec): string | null => {
       if (L === 0) return null;
       return has(idx, spec('beam', p.x, p.z, L - 1, p.dir)) ||
         has(idx, spec('wall', p.x, p.z, L - 1, p.dir)) ||
-        touchingCells(p).some(([x, z]) => has(idx, spec('slab', x, z, L - 1)))
+        touchingCells(p).some(([x, z]) => floorAt(idx, x, z, L - 1))
         ? null
         : 'An upper wall needs a wall, beam or floor slab under it.';
     case 'stairs':
-      return L === 0 || has(idx, spec('slab', p.x, p.z, L - 1))
+      return L === 0 || floorAt(idx, p.x, p.z, L - 1)
         ? null
         : 'Upper stairs need a floor slab under them.';
+    case 'lift':
+      // A shaft starts on the ground or on a floor, or continues the one below.
+      return L === 0 ||
+        floorAt(idx, p.x, p.z, L - 1) ||
+        has(idx, spec('lift', p.x, p.z, L - 1))
+        ? null
+        : 'An elevator needs the shaft below it, or a floor to start on.';
   }
 };
+
+/** Cell (x, z) has a floor at the top of storey L. (Elevator shafts pass through slabs.) */
+const floorAt = (idx: Index, x: number, z: number, L: number): boolean =>
+  has(idx, spec('slab', x, z, L));
 
 /** Corner (x, z) at the top of storey L carries load: a column, or a leaning column ending there. */
 const nodeTop = (idx: Index, x: number, z: number, L: number): boolean =>
@@ -398,7 +418,7 @@ const standsAt = (
         has(idx, spec('beam', ex, ez, L - 1, dir)) ||
         has(idx, spec('wall', ex, ez, L - 1, dir))
     ) ||
-    nodeCells(x, z).some(([cx, cz]) => has(idx, spec('slab', cx, cz, L - 1)))
+    nodeCells(x, z).some(([cx, cz]) => floorAt(idx, cx, cz, L - 1))
     ? null
     : 'This needs a floor under it: a slab, beam, wall or column.';
 };
@@ -490,7 +510,7 @@ const slabSides = (idx: Index, x: number, z: number, L: number): Side[] =>
       ? 'beam'
       : has(idx, spec('wall', ex, ez, L, dir))
         ? 'wall'
-        : has(idx, spec('slab', nx, nz, L))
+        : floorAt(idx, nx, nz, L)
           ? 'slab'
           : 'open'
   );
@@ -678,7 +698,12 @@ export const canPlace = (
   const idx = indexOf(pieces);
   if (has(idx, p))
     return { ok: false, reason: "There's already a piece there." };
-  if (p.kind === 'stairs' && has(idx, spec('slab', p.x, p.z, p.level)))
+  if (
+    (p.kind === 'lift' && has(idx, spec('stairs', p.x, p.z, p.level))) ||
+    (p.kind === 'stairs' && has(idx, spec('lift', p.x, p.z, p.level)))
+  )
+    return { ok: false, reason: 'Stairs and an elevator can’t share a cell.' };
+  if (p.kind === 'stairs' && floorAt(idx, p.x, p.z, p.level))
     return {
       ok: false,
       reason: 'Stairs need an open stairwell: there is a slab right above.',
@@ -750,6 +775,50 @@ export const facingDir8 = (heading: number): Dir => {
   return order[((i % 8) + 8) % 8] ?? 'z';
 };
 
+const OPPOSITE: Record<Dir, Dir> = {
+  x: '-x',
+  '-x': 'x',
+  z: '-z',
+  '-z': 'z',
+  'x+z': '-x-z',
+  '-x-z': 'x+z',
+  'x-z': '-x+z',
+  '-x+z': 'x-z',
+};
+
+/**
+ * Where an elevator in cell (x, z) can take someone standing in it on storey
+ * `level`: up to the next storey whose floor slab crosses the shaft, or down
+ * to the next stop below (the ground, or a slab). Storey numbers, or null.
+ */
+export const liftStops = (
+  pieces: readonly PieceSpec[],
+  x: number,
+  z: number,
+  level: number
+): { up: number | null; down: number | null } => {
+  const here = pieces.filter((p) => p.x === x && p.z === z);
+  const shaft = new Set(
+    here.filter((p) => p.kind === 'lift').map((p) => p.level)
+  );
+  const floors = new Set(
+    here.filter((p) => p.kind === 'slab').map((p) => p.level)
+  );
+  let up: number | null = null;
+  for (let k = level; shaft.has(k); k++)
+    if (floors.has(k)) {
+      up = k + 1;
+      break;
+    }
+  let down: number | null = null;
+  for (let k = level - 1; k >= 0 && shaft.has(k); k--)
+    if (k === 0 || floors.has(k - 1)) {
+      down = k;
+      break;
+    }
+  return { up, down };
+};
+
 /** The direction closest to a heading (radians, 0 = +z). */
 export const facingDir = (heading: number): Dir => {
   const sx = Math.sin(heading);
@@ -782,7 +851,9 @@ export const snapToGrid = (
       x: Math.floor(u),
       z: Math.floor(v),
       level: L,
-      dir: kind === 'stairs' ? facing : null,
+      // Stairs climb the way you face; an elevator's door opens back toward you.
+      dir:
+        kind === 'stairs' ? facing : kind === 'lift' ? OPPOSITE[facing] : null,
       material: null,
     };
   if (isNodeKind(kind))

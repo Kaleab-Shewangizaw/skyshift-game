@@ -1,6 +1,6 @@
 import { CITY_RADIUS, TILE, isLotTile, isPad, tileAt } from '../../shared/city';
 import { STOREY, type Piece } from '../../shared/structure';
-import { PAD_TOP, pieceBoxes } from './layout';
+import { PAD_TOP, pieceBoxes, stairRails, stairTopOpen } from './layout';
 
 // Simple character physics: the world is a list of axis-aligned boxes. The
 // player is a short upright cylinder. Boxes block sideways movement when they
@@ -35,12 +35,14 @@ export type Input = {
   moveX: number;
   moveZ: number;
   jump: boolean;
+  run?: boolean;
 };
 
 export const RADIUS = 0.35;
 export const HEIGHT = 1.8;
 const STEP = 0.55;
 const WALK = 5.2;
+const RUN = 9;
 const CLIMB = 2.6;
 const GRAVITY = 22;
 const JUMP = 7.2;
@@ -90,6 +92,10 @@ export const buildColliders = (
       out.push(
         fromBox(b.pos, b.size, p.kind === 'column' || p.kind === 'lean')
       );
+  for (const p of pieces)
+    if (p.kind === 'stairs')
+      for (const b of stairRails(p, stairTopOpen(pieces, p)))
+        out.push(fromBox(b.pos, b.size));
   return out;
 };
 
@@ -144,13 +150,14 @@ export const step = (
   const mz = len > 1 ? input.moveZ / len : input.moveZ;
   if (len > 0.1) b.heading = Math.atan2(mx, mz);
 
+  const speed = input.run ? RUN : WALK;
   // Sideways, one axis at a time so the body slides along walls.
   let climb = false;
-  const nx = Math.max(-LIMIT, Math.min(LIMIT, b.x + mx * WALK * dt));
+  const nx = Math.max(-LIMIT, Math.min(LIMIT, b.x + mx * speed * dt));
   const hitX = blocker(cs, nx, b.y, b.z, b.x, b.z);
   if (hitX) climb ||= hitX.climbable;
   else b.x = nx;
-  const nz = Math.max(-LIMIT, Math.min(LIMIT, b.z + mz * WALK * dt));
+  const nz = Math.max(-LIMIT, Math.min(LIMIT, b.z + mz * speed * dt));
   const hitZ = blocker(cs, b.x, b.y, nz, b.x, b.z);
   if (hitZ) climb ||= hitZ.climbable;
   else b.z = nz;

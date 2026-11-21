@@ -119,6 +119,9 @@ Each stage ends playable in `npm run play` and on Reddit.
    ✅ **Playing together** (done 2026-11-21): help on neighbors' plots (plan pieces only,
    🪙 3 each), live workers and instant updates via Devvit realtime (`permissions.realtime`),
    finished dailies as monuments around the city.
+   ✅ **Phone pass and polish** (2026-11-21): elevator piece (in the tall plans), stair
+   handrails and top guard rail, run, a low-power quality profile (resolution, shadows,
+   cars, clouds), studio reflections, detailed cars, rooftops with parapets and clutter.
 7. **Market and stockpile, live presence** (other workers appear via realtime).
 8. **Day test and result card**, then **submission polish** (splash, onboarding, mobile QA).
 

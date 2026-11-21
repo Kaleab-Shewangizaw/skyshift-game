@@ -40,13 +40,24 @@ everyone's plots. Rules: `src/shared/plots.ts` (a test plays the whole campaign)
 
 ## Controls
 
-- **Walk**: on-screen joystick, or WASD / arrow keys. **Jump**: ⤒ button or Space.
+- **Walk**: on-screen joystick, or WASD / arrow keys. **Run**: 🏃 toggle or hold Shift.
+  **Jump**: ⤒ button or Space.
 - **Look around**: drag the screen; pinch or scroll to zoom.
 - **Build**: pick a piece in the hotbar; the ghost in front of the worker shows where it
   goes (green = fits, red = not allowed, with the reason). Press **Place**. Aim at your own
   piece and the button becomes **Take down**.
+- **Following the plan**: aim at a blue hologram piece and yours takes the plan's direction
+  and material by itself (elevator doors, stair directions, brick or glass). In front of a
+  planned elevator shaft, each Place adds the next storey on top, so shafts are built from
+  the ground. Badges on the hotbar count how many of each piece the plan still needs.
 - **Stairs**: place 🪜 Stairs in a cell (they climb the way you face) and walk up to the
-  next floor. Leave the cell above open as the stairwell. Climbing columns still works too.
+  next floor. Leave the cell above open as the stairwell. Handrails keep you on the flight,
+  and a guard rail closes the top if there's no floor to step onto.
+- **Elevator**: stack 🛗 Lift pieces in one cell, one per floor: a glass shaft with a yellow
+  frame, glowing door lights and a 🛗 LIFT sign on every floor. The door faces you when you
+  place it. The shaft passes through your floor slabs, and every slab it crosses is a stop:
+  stand inside and tap **🛗 ▲ / ▼** to ride to the next stop. The watchtower and the lattice
+  tower plans include one.
 - **Crane**: walk to the foot of the crane and tap **Enter crane**. The joystick (or WASD)
   turns the jib and runs the hook in and out; hold ▲ ▼ (or R / F) to raise and lower it.
   Choose a load (24 beams, 16 columns, or a mix of 16 beams + 8 columns), swing the hook

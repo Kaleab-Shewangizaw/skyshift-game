@@ -49,7 +49,9 @@ export const turnOf = (p: PieceSpec): number => {
   switch (p.dir) {
     case 'z':
       // Edges are symmetric; stairs climbing +z need -90°.
-      return p.kind === 'stairs' ? -Math.PI / 2 : Math.PI / 2;
+      return p.kind === 'stairs' || p.kind === 'lift'
+        ? -Math.PI / 2
+        : Math.PI / 2;
     case '-x':
       return Math.PI;
     case '-z':
@@ -110,6 +112,73 @@ const beamGeometry = () => {
   g.rotateY(Math.PI / 2);
   g.translate(-BEAM_LEN / 2 + 0.008, 0, 0);
   return g;
+};
+
+/** Sloped handrails on both sides of a flight climbing +x, with posts. */
+const handrailGeometry = () => {
+  const total = STOREY + SLAB_H;
+  const slope = Math.atan2(total, CELL);
+  const len = Math.hypot(CELL, total);
+  const side = STAIR_WIDTH / 2 + 0.06;
+  const parts = [-side, side].flatMap((z) => {
+    const bar = new THREE.CylinderGeometry(0.04, 0.04, len, 6);
+    // Tip the upright cylinder over so it rises toward +x along the flight.
+    bar.rotateZ(slope - Math.PI / 2);
+    bar.translate(0, 0.95, z);
+    const posts = [-1, 0, 1].map((k) => {
+      const x = (k * CELL) / 2.4;
+      const yStep = (x / CELL) * total; // height of the steps under this post
+      const g = new THREE.CylinderGeometry(0.035, 0.035, 0.95, 6);
+      g.translate(x, yStep + 0.95 / 2, z);
+      return g;
+    });
+    return [bar, ...posts];
+  });
+  return mergeGeometries(parts) ?? new THREE.BoxGeometry(0.1, 0.1, 0.1);
+};
+
+// Elevator shaft, built with its door on the +x side (turned per piece).
+const LIFT_H = STOREY + SLAB_H;
+const LIFT_E = CELL / 2 - 0.12;
+
+/** Yellow corner posts and a header beam over the door. */
+const liftFrameGeometry = () => {
+  const parts = [-1, 1].flatMap((sx) =>
+    [-1, 1].map((sz) => {
+      const g = new THREE.BoxGeometry(0.16, LIFT_H, 0.16);
+      g.translate(sx * LIFT_E, 0, sz * LIFT_E);
+      return g;
+    })
+  );
+  const header = new THREE.BoxGeometry(0.2, 0.4, CELL - 0.24);
+  header.translate(LIFT_E, LIFT_H / 2 - SLAB_H - 0.2, 0);
+  return (
+    mergeGeometries([...parts, header]) ?? new THREE.BoxGeometry(0.1, 0.1, 0.1)
+  );
+};
+
+/** Tinted glass on the three closed sides. */
+const liftGlassGeometry = () => {
+  const panes = [
+    { size: [0.04, LIFT_H, CELL - 0.3], at: [-LIFT_E, 0, 0] },
+    { size: [CELL - 0.3, LIFT_H, 0.04], at: [0, 0, LIFT_E] },
+    { size: [CELL - 0.3, LIFT_H, 0.04], at: [0, 0, -LIFT_E] },
+  ].map(({ size, at }) => {
+    const g = new THREE.BoxGeometry(size[0], size[1], size[2]);
+    g.translate(at[0] ?? 0, at[1] ?? 0, at[2] ?? 0);
+    return g;
+  });
+  return mergeGeometries(panes) ?? new THREE.BoxGeometry(0.1, 0.1, 0.1);
+};
+
+/** Glowing strips down both sides of the door: easy to spot from afar. */
+const liftLightGeometry = () => {
+  const strips = [-1, 1].map((sz) => {
+    const g = new THREE.BoxGeometry(0.05, LIFT_H - 0.6, 0.08);
+    g.translate(LIFT_E + 0.09, -0.1, sz * (LIFT_E - 0.12));
+    return g;
+  });
+  return mergeGeometries(strips) ?? new THREE.BoxGeometry(0.1, 0.1, 0.1);
 };
 
 /** A flight of steps climbing toward +x, filling the cell. */
@@ -346,6 +415,49 @@ const build = (look: string): Part[] => {
             roughness: 0.85,
           }),
           castShadow: true,
+        },
+        {
+          geometry: handrailGeometry(),
+          material: new THREE.MeshStandardMaterial({
+            color: '#e3a234',
+            metalness: 0.4,
+            roughness: 0.45,
+          }),
+          castShadow: false,
+        },
+      ];
+    case 'lift':
+      return [
+        {
+          geometry: liftFrameGeometry(),
+          material: new THREE.MeshStandardMaterial({
+            color: '#ffc21a',
+            metalness: 0.45,
+            roughness: 0.35,
+          }),
+          castShadow: true,
+        },
+        {
+          geometry: liftGlassGeometry(),
+          material: new THREE.MeshPhysicalMaterial({
+            color: '#9fe0ff',
+            metalness: 0.1,
+            roughness: 0.05,
+            transparent: true,
+            opacity: 0.3,
+            depthWrite: false,
+            clearcoat: 1,
+          }),
+          castShadow: false,
+        },
+        {
+          geometry: liftLightGeometry(),
+          material: new THREE.MeshStandardMaterial({
+            color: '#bff6ff',
+            emissive: '#6fe7ff',
+            emissiveIntensity: 1.6,
+          }),
+          castShadow: false,
         },
       ];
     case 'wall:glass':

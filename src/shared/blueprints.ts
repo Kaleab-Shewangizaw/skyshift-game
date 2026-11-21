@@ -49,6 +49,10 @@ const plan = (ax: number, az: number) => {
     stairs: (x: number, z: number, L: number, dir: Dir) =>
       add('stairs', x, z, L, dir),
     spire: (x: number, z: number, L: number) => add('spire', x, z, L),
+    /** An elevator shaft in cell (x, z) from the ground up through storey `top`, door facing `door`. */
+    lift: (x: number, z: number, top: number, door: Dir) => {
+      for (let L = 0; L <= top; L++) add('lift', x, z, L, door);
+    },
   };
 };
 
@@ -195,6 +199,8 @@ export const watchtower = (ax: number, az: number): Blueprint => {
     [0, 2],
     [0, 1],
   ];
+  // An elevator up one corner cell, so nobody has to climb five storeys.
+  p.lift(0, 0, LEVELS - 1, 'x');
   for (let L = 0; L < LEVELS; L++) {
     for (const [x, z] of ring) p.column(x, z, L);
     for (const [x, z, dir] of perimeter(2, 2)) p.brace(x, z, L, dir);
@@ -213,7 +219,7 @@ export const watchtower = (ax: number, az: number): Blueprint => {
     id: 'watchtower',
     name: 'Braced watchtower',
     blurb:
-      'Five braced storeys and a spire. Above floor 2 the steel comes up by crane.',
+      'Five braced storeys, an elevator and a spire. Above floor 2 the steel comes up by crane.',
     pieces: p.out,
   };
 };
@@ -252,6 +258,9 @@ export const latticeTower = (ax: number, az: number): Blueprint => {
       const [dx, dz] = [Math.sign(B / 2 - x), Math.sign(B / 2 - z)];
       add('lean', x + dx * L, z + dz * L, L, dir);
     }
+  // An elevator up the middle (cell 3, 3), stopping at each deck.
+  const TOP_DECK = 8;
+  p.lift(3, 3, TOP_DECK, 'x');
   // First platform: a 4 × 4 deck on the leg tops after two storeys.
   const deck = (lo: number, hi: number, L: number) => {
     for (let x = lo; x < hi; x++) {
@@ -291,7 +300,7 @@ export const latticeTower = (ax: number, az: number): Blueprint => {
     [3, 5],
     [3, 4],
   ];
-  const TOP = 8;
+  const TOP = TOP_DECK;
   for (let L = 3; L <= TOP; L++) {
     for (const [x, z] of ring) p.column(x, z, L);
     for (const [x, z, dir] of perimeter(2, 2)) p.brace(lo + x, lo + z, L, dir);
@@ -302,7 +311,7 @@ export const latticeTower = (ax: number, az: number): Blueprint => {
     id: 'lattice-tower',
     name: 'Iron lattice tower',
     blurb:
-      'Four leaning legs, a platform, a braced core and a spire. A landmark!',
+      'Four leaning legs, a platform, a braced core, an elevator and a spire. A landmark!',
     pieces: p.out,
   };
 };
@@ -379,3 +388,37 @@ export const dayStart = (dateKey: string): TowerState => ({
   ...emptyTower(),
   pads: blueprintTiles(dailyBlueprint(dateKey)),
 });
+
+/**
+ * Help the player follow the plan. When they aim at a slot the blueprint
+ * wants, their piece takes the plan's direction and material (an elevator's
+ * door, a staircase's direction, a wall's brick or glass). And standing at
+ * the foot of a planned elevator shaft, each new piece goes on top of the
+ * shaft so far, so it can be built from the ground up.
+ */
+export const fitToPlan = (
+  bp: Blueprint,
+  placed: readonly PieceSpec[],
+  spec: PieceSpec
+): PieceSpec => {
+  let s = spec;
+  if (s.kind === 'lift') {
+    const have = new Set(
+      placed
+        .filter((p) => p.kind === 'lift' && p.x === s.x && p.z === s.z)
+        .map((p) => p.level)
+    );
+    if (have.has(s.level)) {
+      const next = bp.pieces
+        .filter((p) => p.kind === 'lift' && p.x === s.x && p.z === s.z)
+        .map((p) => p.level)
+        .sort((a, b) => a - b)
+        .find((l) => !have.has(l));
+      if (next !== undefined && next > s.level) s = { ...s, level: next };
+    }
+  }
+  const want = planAt(bp, s);
+  return want && want.kind === s.kind
+    ? { ...s, dir: want.dir, material: want.material }
+    : s;
+};
