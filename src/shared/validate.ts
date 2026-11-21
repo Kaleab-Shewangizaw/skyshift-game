@@ -27,6 +27,7 @@ import {
   type TowerState,
 } from './rules.ts';
 import {
+  ALL_DIRS,
   CRANE_LOAD_IDS,
   PIECE_KINDS,
   WALL_MATERIALS,
@@ -147,7 +148,7 @@ const isWallMaterial = (v: unknown): v is WallMaterial =>
   typeof v === 'string' && WALL_MATERIALS.some((m) => m === v);
 
 const isDir = (v: unknown): v is Dir =>
-  v === 'x' || v === 'z' || v === '-x' || v === '-z';
+  typeof v === 'string' && ALL_DIRS.some((d) => d === v);
 
 const isSteelKind = (v: unknown): v is SteelKind =>
   v === 'beam' || v === 'column';

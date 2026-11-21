@@ -40,6 +40,24 @@ This document replaces the "pick 1 of 3 daily options" design with a hands-on
 - **The old floor-stacking shift game is retired** (decided 2026-11-20). Daily scoring
   comes back as the end-of-day load test.
 
+### Update 2026-11-21: blueprints, levels and a shared city
+
+- **Landmarks need new pieces, not a new grid:** leaning columns (one storey up, one cell
+  in), diagonal braces, arches, spires, and a much higher floor limit. Enough to build an
+  Eiffel-like lattice tower or a Burj-like stepped supertall on the existing grid.
+- **Blueprints:** every goal is a ghost blueprint made of our pieces; players fill it in
+  and see a progress %. A dev-only "save as blueprint" tool is used to author them in-game.
+- **Two layers (decided by the designer):**
+  1. **Daily community challenge (the headline, what a new player sees first):** one
+     blueprint per UTC day for the whole post, generated from the level system with a
+     date seed, built together, reset daily. Every finished daily build joins the shared
+     city skyline.
+  2. **Progression (long-term layer):** in the post's **shared city**, each player owns
+     plots with their own level, coins and blueprint. Levels run from a small house up
+     to landmarks (Eiffel-style around level 12, Burj-style later). Finished buildings earn
+     rent from NPC tenants; rent buys land and more cranes. Anyone can help on anyone's
+     plot (and share the rent).
+
 ## Constraints that shape the plan
 
 - **Platform:** Devvit Web posts run in an iframe on reddit.com, mostly on phones.
@@ -86,8 +104,9 @@ Each stage ends playable in `npm run play` and on Reddit.
 4. ~~Bulldozer~~ (dropped 2026-11-21).
 5. **Structural rules.** Weight and capacity per piece; load flows down through supports.
    Unsupported pieces fall, overloaded ones crack, glass shatters. Fall/shatter animations.
-6. **Landmark pieces.** Diagonal braces, taller storey limit, setbacks, spire. Enough to
-   build an Eiffel-like lattice or a Burj-like supertall.
+6. ✅ **Landmark pieces** (done 2026-11-21): leaning columns (8 directions), cross braces,
+   arches, spires; 48 storeys and 2,500 pieces. Lean/brace/arch use pallet steel above
+   floor 2. Next: blueprints + the daily challenge.
 7. **Market and stockpile, live presence** (other workers appear via realtime).
 8. **Day test and result card**, then **submission polish** (splash, onboarding, mobile QA).
 

@@ -1,4 +1,9 @@
-import { CELL, STOREY, type PieceSpec } from '../../shared/structure';
+import {
+  CELL,
+  DIR_OFFSET,
+  STOREY,
+  type PieceSpec,
+} from '../../shared/structure';
 
 // World layout shared by the renderer and the character physics.
 
@@ -85,8 +90,48 @@ export const pieceBox = (p: PieceSpec): Box => {
       const h = STOREY + SLAB_H;
       return { pos: [cx, floor + h / 2, cz], size: [CELL, h, CELL] };
     }
+    case 'lean': {
+      // Bounding box of a column from corner (x, z) up to the corner it leans to.
+      const [dx, dz] = DIR_OFFSET[p.dir ?? 'x'];
+      return {
+        pos: [(p.x + dx / 2) * CELL, floor + STOREY / 2, (p.z + dz / 2) * CELL],
+        size: [
+          Math.abs(dx) * CELL + COLUMN,
+          STOREY,
+          Math.abs(dz) * CELL + COLUMN,
+        ],
+      };
+    }
+    case 'brace':
+    case 'arch': {
+      // A thin panel standing on the edge, filling the storey.
+      const y = floor + STOREY / 2;
+      return p.dir === 'x'
+        ? { pos: [cx, y, p.z * CELL], size: [CELL, STOREY, 0.16] }
+        : { pos: [p.x * CELL, y, cz], size: [0.16, STOREY, CELL] };
+    }
+    case 'spire':
+      return {
+        pos: [p.x * CELL, floor + SPIRE_H / 2, p.z * CELL],
+        size: [0.7, SPIRE_H, 0.7],
+      };
   }
 };
+
+/** A spire stands two storeys tall. */
+export const SPIRE_H = STOREY * 2;
+
+/** Points along a leaning column, from its foot to its head. */
+const leanPath = (p: PieceSpec, t: number): [number, number, number] => {
+  const [dx, dz] = DIR_OFFSET[p.dir ?? 'x'];
+  return [
+    (p.x + dx * t) * CELL,
+    PAD_TOP + p.level * STOREY + STOREY * t,
+    (p.z + dz * t) * CELL,
+  ];
+};
+
+const LEAN_SEGMENTS = 6;
 
 /**
  * The solid boxes a piece is made of: one for most pieces, one per step for
@@ -94,6 +139,14 @@ export const pieceBox = (p: PieceSpec): Box => {
  * stepping onto the next one.
  */
 export const pieceBoxes = (p: PieceSpec): Box[] => {
+  // Bracing, arches and spires are slim: the worker can slip past them.
+  if (p.kind === 'brace' || p.kind === 'arch' || p.kind === 'spire') return [];
+  if (p.kind === 'lean')
+    // A leaning column is a short staircase of boxes along its slope.
+    return Array.from({ length: LEAN_SEGMENTS }, (_, i) => ({
+      pos: leanPath(p, (i + 0.5) / LEAN_SEGMENTS),
+      size: [COLUMN, STOREY / LEAN_SEGMENTS + 0.05, COLUMN],
+    }));
   if (p.kind !== 'stairs') return [pieceBox(p)];
   const floor = PAD_TOP + p.level * STOREY;
   const rise = (STOREY + SLAB_H) / STAIR_STEPS;

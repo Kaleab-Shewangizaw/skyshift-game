@@ -20,14 +20,50 @@ import { isPad, padTiles } from './city.ts';
 export const CELL = 3;
 /** Storey height (m): walls and columns are this tall. */
 export const STOREY = 4;
-export const MAX_LEVEL = 11;
-export const MAX_PIECES = 800;
+/** 48 storeys: almost 200 m, room for a supertall. */
+export const MAX_LEVEL = 47;
+export const MAX_PIECES = 2500;
 
 export type PieceKind =
-  'foundation' | 'column' | 'beam' | 'slab' | 'wall' | 'stairs';
+  | 'foundation'
+  | 'column'
+  | 'beam'
+  | 'slab'
+  | 'wall'
+  | 'stairs'
+  | 'lean'
+  | 'brace'
+  | 'arch'
+  | 'spire';
 export type WallMaterial = 'brick' | 'stone' | 'glass' | 'timber';
-/** Edges run along +x or +z. Stairs climb toward any of the four directions. */
-export type Dir = 'x' | 'z' | '-x' | '-z';
+/**
+ * Edges run along +x or +z. Stairs climb toward one of the four axis
+ * directions. Leaning columns tilt toward any of the eight neighbors.
+ */
+export type Dir = 'x' | 'z' | '-x' | '-z' | 'x+z' | 'x-z' | '-x+z' | '-x-z';
+
+/** Grid step for each direction. */
+export const DIR_OFFSET: Record<Dir, [number, number]> = {
+  x: [1, 0],
+  z: [0, 1],
+  '-x': [-1, 0],
+  '-z': [0, -1],
+  'x+z': [1, 1],
+  'x-z': [1, -1],
+  '-x+z': [-1, 1],
+  '-x-z': [-1, -1],
+};
+export const ALL_DIRS: Dir[] = [
+  'x',
+  'z',
+  '-x',
+  '-z',
+  'x+z',
+  'x-z',
+  '-x+z',
+  '-x-z',
+];
+const AXIS_DIRS: Dir[] = ['x', 'z', '-x', '-z'];
 
 /** What a player asks to place. */
 export type PieceSpec = {
@@ -97,6 +133,34 @@ export const PIECES: Record<PieceKind, PieceInfo> = {
     weight: 2,
     capacity: 6,
   },
+  lean: {
+    name: 'Leaning column',
+    icon: '📐',
+    hint: 'A column that leans one cell the way you face (diagonals too) over one floor. Stack them for tapering legs.',
+    weight: 1,
+    capacity: 24,
+  },
+  brace: {
+    name: 'Cross brace',
+    icon: '❎',
+    hint: 'Steel X bracing across a grid edge. Needs a column or leaning column at both ends.',
+    weight: 0.5,
+    capacity: 10,
+  },
+  arch: {
+    name: 'Arch',
+    icon: '🌉',
+    hint: 'A curved steel arch along a grid edge, between columns at both ends.',
+    weight: 1,
+    capacity: 14,
+  },
+  spire: {
+    name: 'Spire',
+    icon: '🗼',
+    hint: 'A tall spire on a grid corner: the tip of a tower.',
+    weight: 1,
+    capacity: 0,
+  },
 };
 
 export type WallInfo = {
@@ -120,6 +184,10 @@ export const PIECE_KINDS: PieceKind[] = [
   'slab',
   'wall',
   'stairs',
+  'lean',
+  'brace',
+  'arch',
+  'spire',
 ];
 export const WALL_MATERIALS: WallMaterial[] = [
   'brick',
@@ -129,13 +197,19 @@ export const WALL_MATERIALS: WallMaterial[] = [
 ];
 
 export const isEdgeKind = (k: PieceKind): boolean =>
-  k === 'beam' || k === 'wall';
+  k === 'beam' || k === 'wall' || k === 'brace' || k === 'arch';
 export const isCellKind = (k: PieceKind): boolean =>
   k === 'foundation' || k === 'slab' || k === 'stairs';
+/** Pieces that stand on a grid corner. */
+export const isNodeKind = (k: PieceKind): boolean =>
+  k === 'column' || k === 'lean' || k === 'spire';
 
-/** One slot per position: two pieces can never share a slot. */
+/**
+ * One slot per position: two pieces can never share a slot. Edges and
+ * leaning columns include their direction (several legs may leave one corner).
+ */
 export const slotKey = (p: PieceSpec): string =>
-  `${p.kind}:${p.x},${p.z},${p.level}${isEdgeKind(p.kind) ? (p.dir ?? '') : ''}`;
+  `${p.kind}:${p.x},${p.z},${p.level}${isEdgeKind(p.kind) || p.kind === 'lean' ? (p.dir ?? '') : ''}`;
 
 export const describePiece = (p: PieceSpec): string => {
   const name =
@@ -151,15 +225,21 @@ export const describePiece = (p: PieceSpec): string => {
 export const cellTile = (i: number): number => Math.floor((i + 2) / 4);
 
 /** Cells a piece touches: itself for cells, the 4 around a node, the 2 beside an edge. */
+const nodeCells = (x: number, z: number): [number, number][] => [
+  [x - 1, z - 1],
+  [x, z - 1],
+  [x - 1, z],
+  [x, z],
+];
+
 export const touchingCells = (p: PieceSpec): [number, number][] => {
   if (isCellKind(p.kind)) return [[p.x, p.z]];
-  if (p.kind === 'column')
-    return [
-      [p.x - 1, p.z - 1],
-      [p.x, p.z - 1],
-      [p.x - 1, p.z],
-      [p.x, p.z],
-    ];
+  if (p.kind === 'lean') {
+    // Both ends: the corner it stands on and the corner it leans to.
+    const [dx, dz] = p.dir ? DIR_OFFSET[p.dir] : [0, 0];
+    return [...nodeCells(p.x, p.z), ...nodeCells(p.x + dx, p.z + dz)];
+  }
+  if (isNodeKind(p.kind)) return nodeCells(p.x, p.z);
   return p.dir === 'x'
     ? [
         [p.x, p.z - 1],
@@ -213,8 +293,10 @@ export const isWellFormed = (p: PieceSpec): boolean =>
   (isEdgeKind(p.kind)
     ? p.dir === 'x' || p.dir === 'z'
     : p.kind === 'stairs'
-      ? p.dir !== null
-      : p.dir === null) &&
+      ? p.dir !== null && AXIS_DIRS.includes(p.dir)
+      : p.kind === 'lean'
+        ? p.dir !== null
+        : p.dir === null) &&
   (p.kind === 'wall' ? p.material !== null : p.material === null) &&
   (p.kind !== 'foundation' || p.level === 0);
 
@@ -241,22 +323,16 @@ const supportProblem = (idx: Index, p: PieceSpec): string | null => {
     case 'foundation':
       return null;
     case 'column':
-      if (L === 0)
-        return touchingCells(p).some(([x, z]) =>
-          has(idx, spec('foundation', x, z, 0))
-        )
-          ? null
-          : 'A ground-floor column needs a foundation next to it.';
-      // Upper columns stand on whatever floor is below: no need to stack columns.
-      return has(idx, spec('column', p.x, p.z, L - 1)) ||
-        nodeEdges(p.x, p.z).some(
-          ([x, z, dir]) =>
-            has(idx, spec('beam', x, z, L - 1, dir)) ||
-            has(idx, spec('wall', x, z, L - 1, dir))
-        ) ||
-        touchingCells(p).some(([x, z]) => has(idx, spec('slab', x, z, L - 1)))
+    case 'lean':
+    case 'spire':
+      return standsAt(idx, p.x, p.z, L);
+    case 'brace':
+    case 'arch': {
+      const ends = beamEnds(p);
+      return ends.every(([x, z]) => nodePost(idx, x, z, L))
         ? null
-        : 'A column needs a floor under it: a slab, beam, wall or column.';
+        : `${p.kind === 'arch' ? 'An arch' : 'A brace'} needs a column or leaning column at both ends.`;
+    }
     case 'beam':
       if (beamHeld(idx, p.x, p.z, p.dir, L)) return null;
       if (!beamEnds(p).some(([x, z]) => nodeHasBeam(idx, x, z, L)))
@@ -284,6 +360,47 @@ const supportProblem = (idx: Index, p: PieceSpec): string | null => {
         ? null
         : 'Upper stairs need a floor slab under them.';
   }
+};
+
+/** Corner (x, z) at the top of storey L carries load: a column, or a leaning column ending there. */
+const nodeTop = (idx: Index, x: number, z: number, L: number): boolean =>
+  has(idx, spec('column', x, z, L)) ||
+  ALL_DIRS.some((d) => {
+    const [dx, dz] = DIR_OFFSET[d];
+    return has(idx, spec('lean', x - dx, z - dz, L, d));
+  });
+
+/** Some upright stands at corner (x, z) in storey L: a column, or a leaning column from or to it. */
+const nodePost = (idx: Index, x: number, z: number, L: number): boolean =>
+  nodeTop(idx, x, z, L) ||
+  ALL_DIRS.some((d) => has(idx, spec('lean', x, z, L, d)));
+
+/**
+ * Can something upright (column, leaning column, spire) stand on corner
+ * (x, z) of storey L? On the ground it needs a footing beside it; higher up,
+ * any floor below: a slab, beam, wall, or the top of a column below.
+ */
+const standsAt = (
+  idx: Index,
+  x: number,
+  z: number,
+  L: number
+): string | null => {
+  if (L === 0)
+    return nodeCells(x, z).some(([cx, cz]) =>
+      has(idx, spec('foundation', cx, cz, 0))
+    )
+      ? null
+      : 'On the ground floor this needs a footing next to it.';
+  return nodeTop(idx, x, z, L - 1) ||
+    nodeEdges(x, z).some(
+      ([ex, ez, dir]) =>
+        has(idx, spec('beam', ex, ez, L - 1, dir)) ||
+        has(idx, spec('wall', ex, ez, L - 1, dir))
+    ) ||
+    nodeCells(x, z).some(([cx, cz]) => has(idx, spec('slab', cx, cz, L - 1)))
+    ? null
+    : 'This needs a floor under it: a slab, beam, wall or column.';
 };
 
 /** The two corners a beam or wall edge runs between. */
@@ -322,7 +439,7 @@ const beamHeld = (
   const b = spec('beam', x, z, L, dir);
   return (
     has(idx, spec('wall', x, z, L, dir)) ||
-    beamEnds(b).some(([nx, nz]) => has(idx, spec('column', nx, nz, L)))
+    beamEnds(b).some(([nx, nz]) => nodeTop(idx, nx, nz, L))
   );
 };
 
@@ -341,7 +458,7 @@ const reachesColumn = (idx: Index, p: PieceSpec, L: number): boolean => {
     seen.add(key);
     if (b !== p && beamHeld(idx, b.x, b.z, b.dir, L)) return true;
     for (const [nx, nz] of beamEnds(b)) {
-      if (has(idx, spec('column', nx, nz, L))) return true;
+      if (nodeTop(idx, nx, nz, L)) return true;
       for (const [ex, ez, dir] of nodeEdges(nx, nz)) {
         const next = spec('beam', ex, ez, L, dir);
         if (has(idx, next) && !seen.has(slotKey(next))) queue.push(next);
@@ -446,12 +563,17 @@ export type PalletSpec = DropSpot & { kind: SteelKind };
 
 export type Pallet = PalletSpec & { left: number; by: string; at: number };
 
-export const isSteel = (k: PieceKind): k is SteelKind =>
-  k === 'beam' || k === 'column';
+/** Which pallet steel a piece is cut from: columns and leaning columns use columns; beams, braces and arches use beams. */
+export const steelOf = (k: PieceKind): SteelKind | null =>
+  k === 'column' || k === 'lean'
+    ? 'column'
+    : k === 'beam' || k === 'brace' || k === 'arch'
+      ? 'beam'
+      : null;
 
-/** Beams and columns above floor 2 come off a pallet on their own floor. */
+/** Steel pieces above floor 2 come off a pallet on their own floor. */
 export const needsPallet = (p: PieceSpec): boolean =>
-  isSteel(p.kind) && p.level >= HAND_LEVELS;
+  steelOf(p.kind) !== null && p.level >= HAND_LEVELS;
 
 /** Steel of `kind` waiting on floor `level`. */
 export const steelOnFloor = (
@@ -564,14 +686,11 @@ export const canPlace = (
     return { ok: false, reason: "Keep it open: that's the stairwell." };
   const problem = supportProblem(idx, p);
   if (problem) return { ok: false, reason: problem };
-  if (
-    isSteel(p.kind) &&
-    needsPallet(p) &&
-    steelOnFloor(pallets, p.kind, p.level) < 1
-  )
+  const steel = steelOf(p.kind);
+  if (steel && needsPallet(p) && steelOnFloor(pallets, steel, p.level) < 1)
     return {
       ok: false,
-      reason: `No ${p.kind}s on floor ${p.level + 1}. Bring a pallet up with the crane.`,
+      reason: `No ${steel}s on floor ${p.level + 1}. Bring a pallet up with the crane.`,
     };
   return { ok: true };
 };
@@ -618,6 +737,13 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // ---------- Snapping a tap to the grid ----------
 
+/** The one of eight directions (axes and diagonals) closest to a heading. */
+export const facingDir8 = (heading: number): Dir => {
+  const order: Dir[] = ['z', 'x+z', 'x', 'x-z', '-z', '-x-z', '-x', '-x+z'];
+  const i = Math.round(heading / (Math.PI / 4));
+  return order[((i % 8) + 8) % 8] ?? 'z';
+};
+
 /** The direction closest to a heading (radians, 0 = +z). */
 export const facingDir = (heading: number): Dir => {
   const sx = Math.sin(heading);
@@ -653,13 +779,13 @@ export const snapToGrid = (
       dir: kind === 'stairs' ? facing : null,
       material: null,
     };
-  if (kind === 'column')
+  if (isNodeKind(kind))
     return {
       kind,
       x: Math.round(u),
       z: Math.round(v),
       level: L,
-      dir: null,
+      dir: kind === 'lean' ? facing : null,
       material: null,
     };
   // Edges: whichever grid line is closer.

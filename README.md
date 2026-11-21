@@ -61,6 +61,9 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
   slab, beam, wall or column below → **Beam** on a column or wall, or bolted end to end
   onto another beam (a line of beams must touch a column or wall somewhere) → **Slab** with two supported sides (beams, walls or neighboring slabs; the group must rest on a beam or wall somewhere) →
   **Wall** on the ground, or on a beam or slab below.
+- **Landmark pieces**: 📐 **Leaning column** (tilts one cell, diagonals too, over one floor;
+  stack them for tapering legs), ❎ **Cross brace** and 🌉 **Arch** (on an edge, between
+  uprights at both ends), 🗼 **Spire** (two storeys tall, on a corner). Up to 48 floors.
 - You can take down your own pieces when nothing rests on them. Building is unlimited.
 - Rules are pure functions in `src/shared/structure.ts`, shared by client and server.
   Weights and capacities are defined there already for the structural rules (stage 3).

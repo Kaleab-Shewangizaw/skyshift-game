@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CELL, STOREY, type PieceSpec } from '../../shared/structure';
+import {
+  CELL,
+  DIR_OFFSET,
+  STOREY,
+  type PieceSpec,
+} from '../../shared/structure';
 import {
   BEAM_H,
   BEAM_LEN,
@@ -14,6 +19,8 @@ import {
   WALL_H,
   WALL_LEN,
   WALL_T,
+  SPIRE_H,
+  pieceBox,
 } from './layout';
 import {
   brickTexture,
@@ -151,6 +158,106 @@ const textured = (
   return new THREE.MeshStandardMaterial({ map, ...opts });
 };
 
+const UP = new THREE.Vector3(0, 1, 0);
+
+/**
+ * Where an instance of a piece goes: its anchor, turned the way it faces.
+ * Leaning columns also tilt toward the corner they lean to and stretch to
+ * reach it, which keeps their steel cross-section unchanged.
+ */
+export const pieceTransform = (p: PieceSpec): THREE.Matrix4 => {
+  const pos = new THREE.Vector3(...pieceBox(p).pos);
+  if (p.kind === 'lean') {
+    const [dx, dz] = DIR_OFFSET[p.dir ?? 'x'];
+    const axis = new THREE.Vector3(dx * CELL, STOREY, dz * CELL);
+    const tilt = new THREE.Quaternion().setFromUnitVectors(
+      UP,
+      axis.clone().normalize()
+    );
+    return new THREE.Matrix4().compose(
+      pos,
+      tilt,
+      new THREE.Vector3(1, axis.length() / STOREY, 1)
+    );
+  }
+  return new THREE.Matrix4().compose(
+    pos,
+    new THREE.Quaternion().setFromAxisAngle(UP, turnOf(p)),
+    new THREE.Vector3(1, 1, 1)
+  );
+};
+
+/** Riveted iron, for the lattice pieces: bracing and arches. */
+const ironMaterial = () =>
+  new THREE.MeshStandardMaterial({
+    color: '#8a6a4f',
+    metalness: 0.45,
+    roughness: 0.55,
+  });
+
+/** An X of two flat iron bars across a storey-high panel on the edge. */
+const braceGeometry = () => {
+  const len = Math.hypot(CELL, STOREY);
+  const angle = Math.atan2(STOREY, CELL);
+  const bars = [angle, -angle].map((a) => {
+    const g = new THREE.BoxGeometry(len - 0.1, 0.14, 0.07);
+    g.rotateZ(a);
+    return g;
+  });
+  // A small gusset plate where the bars cross.
+  const plate = new THREE.BoxGeometry(0.34, 0.34, 0.09);
+  return (
+    mergeGeometries([...bars, plate]) ?? new THREE.BoxGeometry(CELL, 0.1, 0.1)
+  );
+};
+
+/** A half-elliptical rib springing 1 m above the floor and rising to the top of the storey. */
+const archGeometry = () => {
+  const a = CELL / 2 - 0.05;
+  const spring = -STOREY / 2 + 1;
+  const rise = STOREY - 1 - 0.08;
+  const points = Array.from({ length: 25 }, (_, i) => {
+    const t = (Math.PI * i) / 24;
+    return new THREE.Vector3(a * Math.cos(t), spring + rise * Math.sin(t), 0);
+  });
+  const rib = new THREE.TubeGeometry(
+    new THREE.CatmullRomCurve3(points),
+    48,
+    0.11,
+    8,
+    false
+  );
+  // Short posts down to the floor at each end, where the arch springs.
+  const posts = [-a, a].map((x) => {
+    const g = new THREE.CylinderGeometry(0.11, 0.13, 1, 8);
+    g.translate(x, -STOREY / 2 + 0.5, 0);
+    return g;
+  });
+  return (
+    mergeGeometries([
+      rib.toNonIndexed(),
+      ...posts.map((g) => g.toNonIndexed()),
+    ]) ?? rib
+  );
+};
+
+/** A slender spire: tapered shaft, a small ball, and an antenna tip. */
+const spireGeometry = () => {
+  const shaft = new THREE.CylinderGeometry(0.05, 0.38, SPIRE_H - 1.2, 10);
+  shaft.translate(0, -0.6, 0);
+  const ball = new THREE.SphereGeometry(0.2, 12, 8);
+  ball.translate(0, SPIRE_H / 2 - 1.1, 0);
+  const tip = new THREE.CylinderGeometry(0.02, 0.04, 1, 6);
+  tip.translate(0, SPIRE_H / 2 - 0.5, 0);
+  return (
+    mergeGeometries([
+      shaft.toNonIndexed(),
+      ball.toNonIndexed(),
+      tip.toNonIndexed(),
+    ]) ?? shaft
+  );
+};
+
 const build = (look: string): Part[] => {
   switch (look) {
     case 'foundation':
@@ -160,6 +267,36 @@ const build = (look: string): Part[] => {
           material: textured(concreteTexture, [1.4, 1.4], {
             color: '#a59f94',
             roughness: 0.95,
+          }),
+          castShadow: true,
+        },
+      ];
+    case 'lean':
+      return build('column');
+    case 'brace':
+      return [
+        {
+          geometry: braceGeometry(),
+          material: ironMaterial(),
+          castShadow: true,
+        },
+      ];
+    case 'arch':
+      return [
+        {
+          geometry: archGeometry(),
+          material: ironMaterial(),
+          castShadow: true,
+        },
+      ];
+    case 'spire':
+      return [
+        {
+          geometry: spireGeometry(),
+          material: new THREE.MeshStandardMaterial({
+            color: '#d9c27a',
+            metalness: 0.75,
+            roughness: 0.3,
           }),
           castShadow: true,
         },

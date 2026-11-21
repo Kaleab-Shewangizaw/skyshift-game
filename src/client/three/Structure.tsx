@@ -12,6 +12,7 @@ import {
   type PieceSpec,
 } from '../../shared/structure';
 import {
+  COLUMN,
   CORNER,
   CORNER_BOTTOM,
   CORNER_TOP,
@@ -20,7 +21,7 @@ import {
   WALL_LEN,
   pieceBox,
 } from './layout';
-import { lookOf, partsFor, turnOf, type Part } from './pieceLooks';
+import { lookOf, partsFor, pieceTransform, type Part } from './pieceLooks';
 
 // Freeform building pieces on the 3 m build grid. Each look (see
 // `pieceLooks.ts`) is drawn as one instanced mesh per part.
@@ -36,18 +37,7 @@ const PieceGroup = ({
   pieces: Piece[];
 }) => {
   const parts = partsFor(lookKey);
-  const matrices = useMemo(() => {
-    const q = new THREE.Quaternion();
-    const up = new THREE.Vector3(0, 1, 0);
-    const one = new THREE.Vector3(1, 1, 1);
-    return pieces.map((p) =>
-      new THREE.Matrix4().compose(
-        new THREE.Vector3(...pieceBox(p).pos),
-        q.clone().setFromAxisAngle(up, turnOf(p)),
-        one
-      )
-    );
-  }, [pieces]);
+  const matrices = useMemo(() => pieces.map(pieceTransform), [pieces]);
   return (
     <>
       {parts.map((part, i) => (
@@ -261,13 +251,41 @@ const Ghost = ({ spec, state }: { spec: PieceSpec; state: GhostState }) => {
     if (mat.current)
       mat.current.opacity = 0.42 + Math.sin(clock.elapsedTime * 6) * 0.14;
   });
-  const b = pieceBox(spec);
   const grow = 0.12;
+  // A leaning column's ghost tilts with it; everything else is its box.
+  const shape = useMemo(() => {
+    if (spec.kind === 'lean') {
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      pieceTransform(spec).decompose(pos, quat, scale);
+      return {
+        position: pos,
+        quaternion: quat,
+        scale: new THREE.Vector3(
+          COLUMN + grow,
+          STOREY * scale.y + grow,
+          COLUMN + grow
+        ),
+      };
+    }
+    const b = pieceBox(spec);
+    return {
+      position: new THREE.Vector3(...b.pos),
+      quaternion: new THREE.Quaternion(),
+      scale: new THREE.Vector3(
+        b.size[0] + grow,
+        b.size[1] + grow,
+        b.size[2] + grow
+      ),
+    };
+  }, [spec]);
   return (
     <mesh
-      key={slotKey(spec)}
-      position={b.pos}
-      scale={[b.size[0] + grow, b.size[1] + grow, b.size[2] + grow]}
+      key={`${slotKey(spec)}${spec.dir ?? ''}`}
+      position={shape.position}
+      quaternion={shape.quaternion}
+      scale={shape.scale}
       geometry={UNIT_BOX}
       renderOrder={2}
     >

@@ -87,7 +87,9 @@ export const buildColliders = (
   out.push(fromBox([stack[0], 0.6, stack[1]], [2.8, 1.2, 5.6]));
   for (const p of pieces)
     for (const b of pieceBoxes(p))
-      out.push(fromBox(b.pos, b.size, p.kind === 'column'));
+      out.push(
+        fromBox(b.pos, b.size, p.kind === 'column' || p.kind === 'lean')
+      );
   return out;
 };
 

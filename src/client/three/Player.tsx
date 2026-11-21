@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   CELL,
   facingDir,
+  facingDir8,
   slotKey,
   snapToGrid,
   type PieceKind,
@@ -82,7 +83,8 @@ export const Player = ({
     c.dampingFactor = 0.12;
     c.enablePan = false;
     c.minDistance = 4;
-    c.maxDistance = 45;
+    // Far enough back to see a whole landmark tower.
+    c.maxDistance = 120;
     c.minPolarAngle = 0.25;
     c.maxPolarAngle = 1.5;
     c.rotateSpeed = 0.8;
@@ -187,7 +189,8 @@ export const Player = ({
       b.z + Math.cos(b.heading) * REACH,
       level,
       material,
-      facingDir(b.heading)
+      // Leaning columns can tilt diagonally too; stairs only along the axes.
+      kind === 'lean' ? facingDir8(b.heading) : facingDir(b.heading)
     );
     const key = `${slotKey(spec)}|${spec.dir ?? ''}|${spec.material ?? ''}|${level}`;
     if (key !== lastAim.current) {

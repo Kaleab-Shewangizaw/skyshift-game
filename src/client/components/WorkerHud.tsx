@@ -20,6 +20,10 @@ const SHORT: Record<PieceKind, string> = {
   slab: 'Slab',
   wall: 'Wall',
   stairs: 'Stairs',
+  lean: 'Lean',
+  brace: 'Brace',
+  arch: 'Arch',
+  spire: 'Spire',
 };
 
 type Props = {
@@ -81,7 +85,7 @@ export const WorkerHud = (p: Props) => {
         </div>
       </div>
 
-      <div className="card grid grid-cols-6 gap-1 p-1.5">
+      <div className="card grid grid-cols-5 gap-1 p-1.5">
         {PIECE_KINDS.map((k) => {
           const on = k === p.kind;
           return (
@@ -97,7 +101,7 @@ export const WorkerHud = (p: Props) => {
           );
         })}
         {p.kind === 'wall' && (
-          <div className="col-span-6 grid grid-cols-4 gap-1.5">
+          <div className="col-span-5 grid grid-cols-4 gap-1.5">
             {WALL_MATERIALS.map((m) => {
               const on = m === p.material;
               return (

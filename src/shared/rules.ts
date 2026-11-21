@@ -6,6 +6,7 @@ import {
   canDeliver,
   describePiece,
   needsPallet,
+  steelOf,
   dropParts,
   type Pallet,
   type DropSpec,
@@ -581,8 +582,9 @@ export const applyPlace = (
 
 /** Take one piece of steel off the first pallet on that floor; empty pallets go away. */
 const useSteel = (pallets: readonly Pallet[], spec: PieceSpec): Pallet[] => {
+  const steel = steelOf(spec.kind);
   const i = pallets.findIndex(
-    (q) => q.kind === spec.kind && q.level === spec.level && q.left > 0
+    (q) => q.kind === steel && q.level === spec.level && q.left > 0
   );
   return pallets
     .map((q, j) => (j === i ? { ...q, left: q.left - 1 } : q))

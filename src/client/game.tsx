@@ -33,7 +33,7 @@ import {
   canPlace,
   canRemove,
   deliveryTarget,
-  isSteel,
+  steelOf,
   slotKey,
   steelOnFloor,
   type Pallet,
@@ -174,9 +174,10 @@ export const App = () => {
   }, [target, pieces, pads, pallets, me]);
 
   // Steel left on the worker's floor, once floors need crane deliveries.
+  const steel = steelOf(kind);
   const steelLeft =
-    target && pallets && isSteel(kind) && target.level >= HAND_LEVELS
-      ? steelOnFloor(pallets, kind, target.level)
+    target && pallets && steel && target.level >= HAND_LEVELS
+      ? steelOnFloor(pallets, steel, target.level)
       : null;
 
   const act = async () => {

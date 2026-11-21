@@ -16,6 +16,7 @@ import {
   cellTile,
   slotKey,
   snapToGrid,
+  type Pallet,
   type PieceSpec,
 } from './structure.ts';
 
@@ -400,4 +401,56 @@ void test('leftover steel can be sent back down', () => {
   assert.ok(
     'error' in applyReturn(r.state, { ...spot, kind: 'column' }, 'ana', 4)
   );
+});
+
+void test('landmark pieces: leaning legs, braces, arches and a spire', () => {
+  const pads = ['1,0', '1,1', '2,0', '2,1'];
+  const at = (...ps: PieceSpec[]) => ps.map((p) => ({ ...p, by: 'x', at: 1 }));
+  // Floor 3 and up need crane steel: a pallet of columns waits up there.
+  const pallets: Pallet[] = [
+    { kind: 'column', x: 4, z: 3, level: 2, left: 4, by: 'x', at: 1 },
+  ];
+  const ok = (pieces: PieceSpec[], p: PieceSpec) => {
+    const r = canPlace(pieces, pads, p, pallets);
+    assert.ok(r.ok, `${slotKey(p)}: ${r.ok ? '' : r.reason}`);
+    return [...pieces, ...at(p)];
+  };
+  // Two legs on footings, each leaning one cell diagonally inward per floor.
+  let s: PieceSpec[] = at(piece('foundation', 2, 2), piece('foundation', 6, 2));
+  s = ok(s, piece('lean', 2, 2, 0, 'x+z'));
+  s = ok(s, piece('lean', 6, 2, 0, '-x+z'));
+  // The next storey starts where the first one ended.
+  s = ok(s, piece('lean', 3, 3, 1, 'x+z'));
+  s = ok(s, piece('lean', 5, 3, 1, '-x+z'));
+  // The legs meet at corner (4, 4) on floor 3: a column, then a spire on top.
+  s = ok(s, piece('column', 4, 4, 2));
+  s = ok(s, piece('spire', 4, 4, 3));
+  // A beam can rest on the top of a leaning column.
+  s = ok(s, piece('beam', 3, 3, 0, 'x'));
+  // Braces and arches need an upright at both ends.
+  s = ok(s, piece('column', 6, 2, 0));
+  s = ok(s, piece('column', 6, 3, 0));
+  s = ok(s, piece('brace', 6, 2, 0, 'z'));
+  s = ok(s, piece('arch', 6, 2, 0, 'z'));
+  const lonely = canPlace(s, pads, piece('brace', 8, 2, 0, 'z'));
+  assert.ok(!lonely.ok && /both ends/.test(lonely.reason));
+  // A leaning column must stand on something.
+  assert.equal(canPlace(s, pads, piece('lean', 8, 2, 0, 'x')).ok, false);
+  // Snapping: leaning columns take the 8-way facing.
+  assert.deepEqual(
+    snapToGrid('lean', 6.2, 5.8, 1, null, 'x-z'),
+    piece('lean', 2, 2, 1, 'x-z')
+  );
+});
+
+void test('above floor 2, leaning columns use column steel and braces use beams', () => {
+  let s = frame(withPad(), 2);
+  const d = applyDeliver(s, { x: 3, z: 0, level: 2, load: 'mixed' }, 'bo', 2);
+  assert.ok(!('error' in d));
+  s = d.state;
+  s = place(s, piece('lean', 3, 0, 2, 'x+z'));
+  s = place(s, piece('column', 4, 0, 2));
+  assert.equal(steelOnFloor(s.pallets, 'column', 2), 6);
+  s = place(s, piece('brace', 3, 0, 2, 'x'));
+  assert.equal(steelOnFloor(s.pallets, 'beam', 2), 15);
 });
