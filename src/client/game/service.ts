@@ -1,3 +1,4 @@
+import type { Presence, SkylineEntry } from '../../shared/live';
 import type {
   ApiError,
   BuildRequest,
@@ -47,6 +48,8 @@ export type GameView = {
   /** Every player's plot in this post's city. */
   plots: Plot[];
   coins: number;
+  /** Finished daily builds, newest first. */
+  skyline: SkylineEntry[];
 };
 
 export type SiteResult =
@@ -62,6 +65,15 @@ export type PlotResult =
   | { ok: true; view: GameView; finished: string | null; bonus: number }
   | { ok: false; reason: string; view: GameView };
 
+/**
+ * This open game's session id: sent with every request so realtime echoes
+ * of our own actions can be told apart (even with two windows on one account).
+ */
+export const SESSION_ID = Math.random()
+  .toString(36)
+  .slice(2, 12)
+  .padEnd(6, '0');
+
 export type GameService = {
   load(): Promise<GameView>;
   /**
@@ -71,8 +83,10 @@ export type GameService = {
   siteWork(work: SiteWork, x: number, z: number): Promise<SiteResult>;
   /** Place a piece, or take down one of your own by its slot. Unlimited. */
   build(op: BuildOp): Promise<SiteResult>;
-  /** Claim a plot, buy land, or build on your own plot. */
+  /** Claim a plot, buy land, build on your own plot, or help on someone else's. */
   plot(op: PlotRequest): Promise<PlotResult>;
+  /** Report where this player's worker is, for live presence. Fire and forget. */
+  presence(p: Presence): void;
 };
 
 // ---------------------------------------------------------------------------
@@ -87,6 +101,7 @@ const toView = (s: StateResponse): GameView => ({
   username: s.username,
   plots: s.plots,
   coins: s.coins,
+  skyline: s.skyline,
 });
 
 const isApiError = (v: unknown): v is ApiError =>
@@ -104,7 +119,10 @@ const request = async <T>(
 ): Promise<T> => {
   let res: Response;
   try {
-    res = await fetch(path, init);
+    res = await fetch(path, {
+      ...init,
+      headers: { ...init?.headers, 'x-skyshift-sid': SESSION_ID },
+    });
   } catch {
     throw new Error(
       "Can't reach the site. Check your connection and try again."
@@ -153,6 +171,18 @@ export const createServerService = (): GameService => {
     async build(op) {
       const body: BuildRequest = { dateKey, ...op };
       return result(await post('/api/build', body));
+    },
+    presence(p) {
+      fetch('/api/presence', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-skyshift-sid': SESSION_ID,
+        },
+        body: JSON.stringify(p),
+      }).catch(() => {
+        // Presence is best effort.
+      });
     },
     async plot(op) {
       const r = await request('/api/plot', parsePlotResponse, {
@@ -253,6 +283,7 @@ export const createLocalService = (username = 'you') => {
     username,
     plots: city.plot ? [city.plot] : [],
     coins: city.coins,
+    skyline: [],
   });
   const apply = (r: { state: TowerState } | { error: string }): SiteResult => {
     if ('error' in r) return { ok: false, reason: r.error, view: view() };
@@ -265,6 +296,9 @@ export const createLocalService = (username = 'you') => {
     async load() {
       collectRent();
       return view();
+    },
+    presence() {
+      // Nobody else is here in local play.
     },
     async plot(op) {
       const now = Date.now();
@@ -283,6 +317,8 @@ export const createLocalService = (username = 'you') => {
         writeCity(city);
         return { ok: true, view: view(), finished, bonus };
       };
+      if (op.op === 'help')
+        return fail('There are no neighbors in local play.');
       if (op.op === 'claim') {
         if (city.plot) return fail('You already have a plot.');
         const block = freeBlock([]);

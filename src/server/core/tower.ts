@@ -15,9 +15,14 @@ import {
   type SiteWork,
   type TowerState,
 } from '../../shared/rules';
-import { dailyBlueprint, dayStart, planAt } from '../../shared/blueprints';
+import {
+  dailyBlueprint,
+  dayStart,
+  planAt,
+  progressOf,
+} from '../../shared/blueprints';
 import type { PieceSpec } from '../../shared/structure';
-import { addCoins, readCity } from './plots';
+import { addCoins, readCity, recordSkyline } from './plots';
 import { parseContributionJson, parseTowerJson } from '../../shared/validate';
 
 // Redis layout (one round = one post on one UTC day):
@@ -64,7 +69,7 @@ export const loadState = async (
 };
 
 /** Today's part of the state; the city is added once the edit is saved. */
-type DayState = Omit<StateResponse, 'plots' | 'coins'>;
+type DayState = Omit<StateResponse, 'plots' | 'coins' | 'skyline'>;
 type DayResult =
   | { ok: true; state: DayState }
   | { ok: false; reason: string; state: DayState };
@@ -154,7 +159,20 @@ const placeDaily = async (
   const res = await editTower(p, 'place', (t) =>
     applyPlace(t, piece, p.username, p.now)
   );
-  const want = planAt(dailyBlueprint(p.dateKey), piece);
+  const daily = dailyBlueprint(p.dateKey);
+  // The piece that finishes today's build puts it on the skyline.
+  if (res.ok) {
+    const prog = progressOf(daily, res.state.tower.pieces);
+    if (prog.done === prog.total) {
+      await recordSkyline(p.postId, {
+        dateKey: p.dateKey,
+        name: daily.name,
+        by: p.username,
+      });
+      res.state.skyline = (await readCity(p.postId, p.userId)).skyline;
+    }
+  }
+  const want = planAt(daily, piece);
   if (
     res.ok &&
     want &&

@@ -116,6 +116,9 @@ Each stage ends playable in `npm run play` and on Reddit.
    one block per player (24 per post), 5 levels from cottage to an Eiffel-style lattice
    tower, completion bonus + hourly rent, land bought tile by tile, 🪙 3 per daily-plan
    piece, travel buttons. Plots carry steel by hand at any height (a plot crane is later).
+   ✅ **Playing together** (done 2026-11-21): help on neighbors' plots (plan pieces only,
+   🪙 3 each), live workers and instant updates via Devvit realtime (`permissions.realtime`),
+   finished dailies as monuments around the city.
 7. **Market and stockpile, live presence** (other workers appear via realtime).
 8. **Day test and result card**, then **submission polish** (splash, onboarding, mobile QA).
 

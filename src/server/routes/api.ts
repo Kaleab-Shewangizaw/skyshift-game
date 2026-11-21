@@ -1,5 +1,5 @@
-import { Hono } from 'hono';
-import { context, reddit } from '@devvit/web/server';
+import { Hono, type Context } from 'hono';
+import { context, reddit, redis } from '@devvit/web/server';
 import type {
   ApiError,
   PlotResponse,
@@ -12,6 +12,8 @@ import {
   parsePlotRequest,
   parseSiteRequest,
 } from '../../shared/validate';
+import { isSid, parsePresence, type LiveMessage } from '../../shared/live';
+import { announce } from '../core/live';
 import { collectRent, plotAction } from '../core/plots';
 import { TowerBusyError } from '../core/txn';
 import {
@@ -24,6 +26,32 @@ import {
 export const api = new Hono();
 
 const fail = (message: string): ApiError => ({ status: 'error', message });
+
+/** The session id of the open game that sent this request (see shared/live.ts). */
+const sidOf = (c: Context): string => {
+  const sid = c.req.header('x-skyshift-sid');
+  return isSid(sid) ? sid : 'unknown';
+};
+
+/**
+ * After a successful change, tell every open game. `msg` says what changed
+ * (a piece, so games apply it at once); by default games just reload.
+ */
+const announced = async <R extends { ok: boolean }>(
+  postId: string,
+  c: Context,
+  by: string,
+  work: Promise<R>,
+  msg?: (r: R) => LiveMessage | null
+): Promise<R> => {
+  const r = await work;
+  if (r.ok)
+    await announce(postId, msg?.(r) ?? { t: 'changed', sid: sidOf(c), by });
+  return r;
+};
+
+//   names:{postId}  hash  userId -> username, so presence needs no Reddit API call
+const namesKey = (postId: string) => `names:${postId}`;
 
 api.onError((error, c) => {
   console.error(`API error on ${c.req.method} ${c.req.path}:`, error);
@@ -58,6 +86,8 @@ api.get('/state', async (c) => {
     : null;
   // Rent from the player's buildings accrues while they're away.
   if (userId) await collectRent(postId, userId, Date.now());
+  if (userId && username)
+    await redis.hSet(namesKey(postId), { [userId]: username });
   return c.json<StateResponse>(
     await loadState(postId, dateKey, userId, username)
   );
@@ -84,15 +114,53 @@ api.post('/plot', async (c) => {
     });
   }
   return c.json<PlotResponse>(
-    await plotAction({
+    await announced(
       postId,
-      userId,
+      c,
       username,
-      request: req,
-      now: Date.now(),
-      state: () => loadState(postId, dateKey, userId, username),
-    })
+      plotAction({
+        postId,
+        userId,
+        username,
+        request: req,
+        now: Date.now(),
+        state: () => loadState(postId, dateKey, userId, username),
+      }),
+      (r) => {
+        if (req.op === 'claim' || req.op === 'buy') return null;
+        // Placing on your own plot: find its block in the fresh state.
+        const block =
+          req.op === 'help'
+            ? req.block
+            : r.state.plots.find((q) => q.owner === username)?.block;
+        if (!block) return null;
+        return {
+          t: 'piece',
+          sid: sidOf(c),
+          by: username,
+          block,
+          place: req.op === 'remove' ? null : req.piece,
+          remove: req.op === 'remove' ? req.slot : null,
+        };
+      }
+    )
   );
+});
+
+/** Where this player's worker is; relayed live to everyone else on the post. */
+/**
+ * Where this player's worker is, several times a second while moving. Kept
+ * cheap: one Redis read for the name, then a broadcast.
+ */
+api.post('/presence', async (c) => {
+  const { postId, userId } = context;
+  if (!postId || !userId) return c.json({ ok: false });
+  const body: unknown = await c.req.json().catch(() => null);
+  const pos = parsePresence(body);
+  if (!pos) return c.json({ ok: false });
+  const user = (await redis.hGet(namesKey(postId), userId)) ?? 'builder';
+  await announce(postId, { t: 'pos', sid: sidOf(c), user, ...pos });
+  return c.json({ ok: true });
 });
 
 api.post('/site', async (c) => {
@@ -125,16 +193,21 @@ api.post('/site', async (c) => {
     });
   }
   return c.json<SiteResponse>(
-    await doSiteWork({
+    await announced(
       postId,
-      dateKey,
-      userId,
+      c,
       username,
-      work: req.work,
-      x: req.x,
-      z: req.z,
-      now: Date.now(),
-    })
+      doSiteWork({
+        postId,
+        dateKey,
+        userId,
+        username,
+        work: req.work,
+        x: req.x,
+        z: req.z,
+        now: Date.now(),
+      })
+    )
   );
 });
 
@@ -169,13 +242,29 @@ api.post('/build', async (c) => {
     });
   }
   return c.json<SiteResponse>(
-    await doBuild({
+    await announced(
       postId,
-      dateKey,
-      userId,
+      c,
       username,
-      request: req,
-      now: Date.now(),
-    })
+      doBuild({
+        postId,
+        dateKey,
+        userId,
+        username,
+        request: req,
+        now: Date.now(),
+      }),
+      () =>
+        req.op === 'place' || req.op === 'remove'
+          ? {
+              t: 'piece',
+              sid: sidOf(c),
+              by: username,
+              block: null,
+              place: req.op === 'place' ? req.piece : null,
+              remove: req.op === 'remove' ? req.slot : null,
+            }
+          : null
+    )
   );
 });

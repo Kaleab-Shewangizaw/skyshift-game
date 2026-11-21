@@ -15,6 +15,8 @@ import { Crane } from './Crane';
 import { CraneOperator, type CraneAim } from './CraneOperator';
 import { CRANE_POS, PAD_TOP, STACK_POS } from './layout';
 import { Player } from './Player';
+import { RemoteWorkers } from './RemoteWorkers';
+import type { Plinth } from '../game/monuments';
 import { buildColliders } from './physics';
 import { Structure, type BuildView } from './Structure';
 
@@ -28,6 +30,8 @@ export type City3DProps = {
   kind: PieceKind;
   material: WallMaterial;
   onAim: (spec: PieceSpec, level: number) => void;
+  /** Stone plinths under the monuments of finished daily builds. */
+  plinths: readonly Plinth[];
   /** Blueprint pieces still to build, drawn as a see-through plan. */
   plan: readonly PieceSpec[];
   /** Grid and ghost around the worker or under the hook (null in site overview). */
@@ -119,6 +123,17 @@ export const City3D = (p: City3DProps) => {
       {p.inCrane && !p.siteMode && (
         <CraneOperator buildingTop={buildingTop} onAim={p.onCraneAim} />
       )}
+      <RemoteWorkers />
+      {p.plinths.map((q) => (
+        <mesh
+          key={`${q.x},${q.z}`}
+          position={[q.x, PAD_TOP / 2, q.z]}
+          receiveShadow
+        >
+          <boxGeometry args={[q.w, PAD_TOP, q.d]} />
+          <meshStandardMaterial color="#cfc6b6" roughness={0.9} />
+        </mesh>
+      ))}
       <ViewOffset insetTop={p.insetTop} insetBottom={p.insetBottom} />
     </Canvas>
   );

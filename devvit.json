@@ -37,5 +37,10 @@
   },
   "dev": {
     "subreddit": "skyshift_game_dev"
+  },
+  "permissions": {
+    "redis": true,
+    "reddit": true,
+    "realtime": true
   }
 }

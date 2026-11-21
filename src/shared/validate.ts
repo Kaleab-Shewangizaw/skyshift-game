@@ -9,6 +9,7 @@ import type {
   StateResponse,
 } from './api.ts';
 import { isValidDateKey } from './challenge.ts';
+import type { SkylineEntry } from './live.ts';
 import { LEVELS, PLOT_BLOCKS, type Plot } from './plots.ts';
 import { inCity, parseTileKey } from './city.ts';
 import {
@@ -369,6 +370,10 @@ export const parseStateResponse = (v: unknown): StateResponse | null => {
       ? v.plots.map(parsePlot).filter((p): p is Plot => p !== null)
       : [];
   const coins = 'coins' in v && isCount(v.coins) ? v.coins : 0;
+  const skyline =
+    'skyline' in v && Array.isArray(v.skyline)
+      ? v.skyline.filter(isSkylineEntry)
+      : [];
   return {
     dateKey: v.dateKey,
     tower,
@@ -376,6 +381,7 @@ export const parseStateResponse = (v: unknown): StateResponse | null => {
     username: v.username,
     plots,
     coins,
+    skyline,
   };
 };
 
@@ -416,6 +422,16 @@ export const parsePlot = (v: unknown): Plot | null => {
   };
 };
 
+export const isSkylineEntry = (v: unknown): v is SkylineEntry =>
+  isObject(v) &&
+  'dateKey' in v &&
+  typeof v.dateKey === 'string' &&
+  isValidDateKey(v.dateKey) &&
+  'name' in v &&
+  typeof v.name === 'string' &&
+  'by' in v &&
+  typeof v.by === 'string';
+
 export const parsePlotJson = (raw: string | undefined | null): Plot | null =>
   parsePlot(parseJson(raw));
 
@@ -423,6 +439,21 @@ export const parsePlotRequest = (v: unknown): PlotRequest | null => {
   if (!isObject(v) || !('op' in v)) return null;
   if (v.op === 'claim') return { op: 'claim' };
   if (v.op === 'buy') return { op: 'buy' };
+  if (v.op === 'help' && 'piece' in v && 'block' in v) {
+    const piece = parsePieceSpec(v.piece);
+    const b = v.block;
+    if (
+      !piece ||
+      !isObject(b) ||
+      !('bx' in b) ||
+      !('bz' in b) ||
+      typeof b.bx !== 'number' ||
+      typeof b.bz !== 'number'
+    )
+      return null;
+    const block = PLOT_BLOCKS.find((q) => q.bx === b.bx && q.bz === b.bz);
+    return block ? { op: 'help', block, piece } : null;
+  }
   if (v.op === 'place' && 'piece' in v) {
     const piece = parsePieceSpec(v.piece);
     return piece ? { op: 'place', piece } : null;

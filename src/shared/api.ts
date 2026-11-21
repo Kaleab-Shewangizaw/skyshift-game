@@ -1,4 +1,5 @@
-import type { Plot } from './plots.ts';
+import type { SkylineEntry } from './live.ts';
+import type { Block, Plot } from './plots.ts';
 import type { DropSpec, PalletSpec, PieceSpec } from './structure.ts';
 import type {
   Action,
@@ -21,6 +22,8 @@ export type StateResponse = {
   plots: Plot[];
   /** The viewer's coins (0 when logged out). */
   coins: number;
+  /** Finished daily builds, newest first: they stand around the city as monuments. */
+  skyline: SkylineEntry[];
 };
 
 /** POST /api/plot body: work on your own plot. */
@@ -28,7 +31,9 @@ export type PlotRequest =
   | { op: 'claim' }
   | { op: 'buy' }
   | { op: 'place'; piece: PieceSpec }
-  | { op: 'remove'; slot: string };
+  | { op: 'remove'; slot: string }
+  /** Add a piece from someone else's plan to their plot. */
+  | { op: 'help'; block: Block; piece: PieceSpec };
 
 /** `finished` names a level the request just completed; `bonus` is what it paid. */
 export type PlotResponse =

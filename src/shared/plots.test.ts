@@ -156,3 +156,35 @@ void test('finished buildings are rented out and stay up', () => {
   const prog = progressOf(cottagePlan, r.plot.pieces);
   assert.equal(prog.done, prog.total);
 });
+
+void test('neighbors can help, but only with pieces from the owner’s plan', () => {
+  const plot = newPlot('ana', { bx: 1, bz: 0 }, 0);
+  const plan = LEVELS[0]?.blueprint(plot.block).pieces ?? [];
+  const first = plan[0];
+  assert.ok(first);
+  const helped = placeOnPlot(plot, first, 1, 'bo');
+  assert.ok(helped.ok);
+  assert.equal(helped.plot.pieces[0]?.by, 'bo');
+  // Off-plan pieces: only the owner.
+  const wrong = placeOnPlot(
+    plot,
+    { ...first, kind: 'foundation', dir: null, material: null },
+    1,
+    'bo'
+  );
+  assert.ok(!wrong.ok && /their plan/.test(wrong.reason));
+  // Helpers can take back their own pieces, not the owner's.
+  assert.ok(removeFromPlot(helped.plot, slotKey(first), 'bo').ok);
+  assert.equal(removeFromPlot(helped.plot, slotKey(first), 'cy').ok, false);
+  // A helper who places the last piece finishes the level; the bonus is the owner's.
+  let p = plot;
+  let finished: string | null = null;
+  for (const piece of plan) {
+    const r = placeOnPlot(p, piece, 2, 'bo');
+    assert.ok(r.ok);
+    p = r.plot;
+    finished = r.finished ?? finished;
+  }
+  assert.equal(finished, 'Brick cottage');
+  assert.equal(p.level, 1);
+});

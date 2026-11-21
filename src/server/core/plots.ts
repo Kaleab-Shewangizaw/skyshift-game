@@ -13,7 +13,8 @@ import {
   rentDue,
   type Plot,
 } from '../../shared/plots';
-import { parsePlotJson } from '../../shared/validate';
+import type { SkylineEntry } from '../../shared/live';
+import { isSkylineEntry, parsePlotJson } from '../../shared/validate';
 import { RETRY, committed, optimistic } from './txn';
 
 // The post's city persists across days (no expiry):
@@ -22,6 +23,34 @@ import { RETRY, committed, optimistic } from './txn';
 
 export const plotsKey = (postId: string) => `plots:${postId}`;
 export const coinsKey = (postId: string) => `coins:${postId}`;
+//   skyline:{postId} hash  dateKey -> JSON SkylineEntry (finished daily builds)
+export const skylineKey = (postId: string) => `skyline:${postId}`;
+
+/** How many finished daily builds stand around the city. */
+const SKYLINE_SHOWN = 8;
+
+const readSkyline = async (postId: string): Promise<SkylineEntry[]> => {
+  const all = await redis.hGetAll(skylineKey(postId));
+  return Object.values(all)
+    .map((raw) => {
+      try {
+        const v: unknown = JSON.parse(raw);
+        return isSkylineEntry(v) ? v : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter((e): e is SkylineEntry => e !== null)
+    .sort((a, b) => b.dateKey.localeCompare(a.dateKey))
+    .slice(0, SKYLINE_SHOWN);
+};
+
+/** Remember a finished daily build (once per day). */
+export const recordSkyline = async (postId: string, entry: SkylineEntry) => {
+  const key = skylineKey(postId);
+  if (await redis.hGet(key, entry.dateKey)) return;
+  await redis.hSet(key, { [entry.dateKey]: JSON.stringify(entry) });
+};
 
 const readPlots = async (postId: string): Promise<Plot[]> => {
   const all = await redis.hGetAll(plotsKey(postId));
@@ -40,12 +69,13 @@ const readCoins = async (postId: string, userId: string): Promise<number> => {
 export const readCity = async (
   postId: string,
   userId: string | undefined
-): Promise<Pick<StateResponse, 'plots' | 'coins'>> => {
-  const [plots, coins] = await Promise.all([
+): Promise<Pick<StateResponse, 'plots' | 'coins' | 'skyline'>> => {
+  const [plots, coins, skyline] = await Promise.all([
     readPlots(postId),
     userId ? readCoins(postId, userId) : Promise.resolve(0),
+    readSkyline(postId),
   ]);
-  return { plots, coins };
+  return { plots, coins, skyline };
 };
 
 /** Pay out the rent this player's buildings earned since their last visit. */
@@ -75,6 +105,9 @@ export const collectRent = async (
 /** Coins for helping with today's build. */
 export const addCoins = (postId: string, userId: string, n: number) =>
   redis.hIncrBy(coinsKey(postId), userId, n);
+
+/** Coins a helper earns for each piece of a neighbor's plan. */
+const HELP_COINS = 3;
 
 type Done =
   | { ok: true; finished: string | null; bonus: number }
@@ -113,6 +146,26 @@ export const plotAction = async (p: {
       if (!block)
         return fail('Every plot in this city is taken. Help a neighbor build!');
       next = newPlot(p.username, block, p.now);
+    } else if (r.op === 'help') {
+      // Building on someone else's plot: find whose block it is.
+      const all = await redis.hGetAll(pk);
+      const entry = Object.entries(all).find(([, raw]) => {
+        const q = parsePlotJson(raw);
+        return q?.block.bx === r.block.bx && q.block.bz === r.block.bz;
+      });
+      const theirs = entry ? parsePlotJson(entry[1]) : null;
+      if (!entry || !theirs) return fail('Nobody owns that plot yet.');
+      const b = placeOnPlot(theirs, r.piece, p.now, p.username);
+      if (!b.ok) return fail(b.reason);
+      const [ownerId] = entry;
+      const self = ownerId === p.userId;
+      await txn.multi();
+      await txn.hSet(pk, { [ownerId]: JSON.stringify(b.plot) });
+      await txn.hIncrBy(ck, ownerId, b.bonus);
+      await txn.hIncrBy(ck, p.userId, self ? 0 : HELP_COINS);
+      return (await committed(txn.exec(), 3))
+        ? { ok: true, finished: b.finished, bonus: self ? b.bonus : HELP_COINS }
+        : RETRY;
     } else {
       if (!mine) return fail('Get a plot first.');
       if (r.op === 'buy') {

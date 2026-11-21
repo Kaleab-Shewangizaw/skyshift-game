@@ -15,6 +15,7 @@ export const PlotCard = ({
   coins,
   busy,
   onBuy,
+  visitor = false,
 }: {
   plot: Plot;
   /** Progress on the current level's blueprint (null when every level is done). */
@@ -22,6 +23,8 @@ export const PlotCard = ({
   coins: number;
   busy: boolean;
   onBuy: () => void;
+  /** Set when visiting someone else's plot: no buying, an invitation to help instead. */
+  visitor?: boolean;
 }) => {
   const lvl = currentLevel(plot);
   const name = lvl?.blueprint(plot.block).name ?? 'Every level built!';
@@ -37,8 +40,8 @@ export const PlotCard = ({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[10px] font-bold uppercase tracking-wider text-[#9a8466]">
-            🏠 Your plot · level {Math.min(plot.level + 1, LEVELS.length)} of{' '}
-            {LEVELS.length}
+            {visitor ? `🤝 u/${plot.owner}'s plot` : '🏠 Your plot'} · level{' '}
+            {Math.min(plot.level + 1, LEVELS.length)} of {LEVELS.length}
             {rate > 0 && <> · earning 🪙 {rate}/h</>}
           </div>
           <div className="truncate text-[15px] font-bold leading-tight text-[#3b2a1a]">
@@ -51,7 +54,16 @@ export const PlotCard = ({
           </div>
         )}
       </div>
-      {lvl && need.length > 0 ? (
+      {visitor && lvl && need.length === 0 && (
+        <div className="mt-1 text-[12px] font-semibold text-[#1f7a35]">
+          Help build it: 🪙 3 for every piece of their plan you add.
+        </div>
+      )}
+      {lvl && need.length > 0 && visitor ? (
+        <div className="mt-1.5 text-[12px] font-semibold text-[#5c4630]">
+          u/{plot.owner} needs more land before the next building.
+        </div>
+      ) : lvl && need.length > 0 ? (
         <div className="mt-1.5 flex items-center justify-between gap-2">
           <span className="text-[12px] font-semibold text-[#5c4630]">
             Needs {need.length} more tile{need.length > 1 ? 's' : ''} of land.

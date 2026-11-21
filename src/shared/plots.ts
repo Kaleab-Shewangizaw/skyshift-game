@@ -1,5 +1,6 @@
 import {
   cottage,
+  planAt,
   house,
   latticeTower,
   pavilion,
@@ -194,22 +195,41 @@ export const buyTile = (
   return { ok: true, price, plot: { ...p, tiles: [...p.tiles, next] } };
 };
 
-/** Pieces from other plots never block yours; only your own pieces and land count. */
+/** Does `spec` fill a slot of the plot's current plan, exactly as planned? */
+export const onPlotPlan = (p: Plot, spec: PieceSpec): boolean => {
+  const lvl = currentLevel(p);
+  if (!lvl || tilesNeeded(p).length > 0) return false;
+  const want = planAt(lvl.blueprint(p.block), spec);
+  return !!want && want.material === spec.material && want.dir === spec.dir;
+};
+
+/**
+ * Place a piece on a plot. The owner may build anything on their land; a
+ * helper (`by` someone else) may only add pieces from the owner's current
+ * plan, so nobody can mess up a neighbor's build. Pieces from other plots
+ * never block it. The level bonus always goes to the owner.
+ */
 export const placeOnPlot = (
   p: Plot,
   spec: PieceSpec,
-  at: number
+  at: number,
+  by: string = p.owner
 ): Result<{
   plot: Plot;
   bonus: number;
   finished: string | null;
   summary: string;
 }> => {
+  if (by !== p.owner && !onPlotPlan(p, spec))
+    return {
+      ok: false,
+      reason: `On u/${p.owner}'s plot you can add pieces from their plan (the blue outline).`,
+    };
   const check = canPlace(p.pieces, p.tiles, spec, null);
   if (!check.ok) return { ok: false, reason: check.reason };
   let plot: Plot = {
     ...p,
-    pieces: [...p.pieces, { ...spec, by: p.owner, at }],
+    pieces: [...p.pieces, { ...spec, by, at }],
   };
   const lvl = currentLevel(p);
   let bonus = 0;
@@ -236,9 +256,10 @@ export const placeOnPlot = (
 
 export const removeFromPlot = (
   p: Plot,
-  slot: string
+  slot: string,
+  by: string = p.owner
 ): Result<{ plot: Plot }> => {
-  const check = canRemove(p.pieces, slot, p.owner, []);
+  const check = canRemove(p.pieces, slot, by, []);
   if (!check.ok) return { ok: false, reason: check.reason };
   // Pieces of finished levels stay: they're rented out.
   for (let i = 0; i < p.level; i++) {

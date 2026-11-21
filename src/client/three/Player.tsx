@@ -13,6 +13,7 @@ import {
   type WallMaterial,
 } from '../../shared/structure';
 import { controls, takeJump, takeTeleport } from '../game/controls';
+import { setMyPosition } from '../game/remote';
 import { CRANE_POS, PAD_TOP } from './layout';
 import { step, storeyOf, type Body, type Collider } from './physics';
 
@@ -219,6 +220,9 @@ export const Player = ({
       onCell(cx, cz, floor);
     }
 
+    // Shared with the presence reporter (other players see this worker).
+    setMyPosition({ x: b.x, y: b.y, z: b.z, h: b.heading, crane: !visible });
+
     const near =
       Math.hypot(b.x - CRANE_POS[0], b.z - CRANE_POS[1]) < 4.5 && b.y < 2;
     if (near !== nearCrane.current) {
@@ -274,7 +278,7 @@ const JEANS = '#2f4b7c';
 const BOOT = '#4a3423';
 const HAT = '#ffd23f';
 
-type ModelRefs = {
+export type ModelRefs = {
   legL: RefObject<THREE.Group | null>;
   legR: RefObject<THREE.Group | null>;
   armL: RefObject<THREE.Group | null>;
@@ -283,7 +287,14 @@ type ModelRefs = {
 };
 
 /** A rounded, toy-like construction worker. Limbs pivot at hips and shoulders. */
-const WorkerModel = ({ legL, legR, armL, armR, torso }: ModelRefs) => (
+export const WorkerModel = ({
+  legL,
+  legR,
+  armL,
+  armR,
+  torso,
+  vest = VEST,
+}: ModelRefs & { vest?: string }) => (
   <group>
     {[legL, legR].map((ref, i) => (
       <group key={i} ref={ref} position={[i === 0 ? -0.12 : 0.12, 0.92, 0]}>
@@ -304,7 +315,7 @@ const WorkerModel = ({ legL, legR, armL, armR, torso }: ModelRefs) => (
       </mesh>
       <mesh position={[0, 1.25, 0]} castShadow>
         <capsuleGeometry args={[0.23, 0.22, 8, 20]} />
-        <meshStandardMaterial color={VEST} roughness={0.6} />
+        <meshStandardMaterial color={vest} roughness={0.6} />
       </mesh>
       {[1.15, 1.33].map((y) => (
         <mesh key={y} position={[0, y, 0]}>
@@ -325,7 +336,7 @@ const WorkerModel = ({ legL, legR, armL, armR, torso }: ModelRefs) => (
         >
           <mesh position={[0, -0.26, 0]} castShadow>
             <capsuleGeometry args={[0.075, 0.38, 6, 12]} />
-            <meshStandardMaterial color={VEST} roughness={0.6} />
+            <meshStandardMaterial color={vest} roughness={0.6} />
           </mesh>
           <mesh position={[0, -0.56, 0]} castShadow>
             <sphereGeometry args={[0.085, 14, 10]} />

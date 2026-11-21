@@ -27,6 +27,17 @@ blueprint pays 🪙 3. Bigger levels need more land: **Buy a tile** on your plot
 **🏠 My plot** and **📋 Today** jump between your plot and today's build. Everyone sees
 everyone's plots. Rules: `src/shared/plots.ts` (a test plays the whole campaign).
 
+## Playing together
+
+- **Helping:** on anyone's plot you can add pieces from *their* plan (the blue outline):
+  🪙 3 per piece for you, and if you place the last piece the owner still gets the level
+  bonus. You can take back your own pieces; nobody can change the owner's build.
+- **Live:** other players' workers (blue vests, name tags) walk around in real time, and
+  every change anyone makes shows up within a couple of seconds (Devvit realtime: the
+  server relays `POST /api/presence` and announces changes on the post's channel).
+- **Skyline:** every finished daily build becomes a monument on a stone plinth in a ring
+  around the city (the 8 most recent).
+
 ## Controls
 
 - **Walk**: on-screen joystick, or WASD / arrow keys. **Jump**: ⤒ button or Space.
@@ -106,6 +117,8 @@ src/server/   Hono app: /api/* for the client, /internal/* for menu/triggers
   site (the site grows, up to 30 tiles); `prepare` levels a site tile into a buildable pad.
 - `POST /api/build` `{ dateKey, op: 'place', piece }` or `{ dateKey, op: 'remove', slot }`.
 - `POST /api/plot` `{ op: 'claim' | 'buy' }`, `{ op: 'place', piece }`, `{ op: 'remove', slot }`.
+- `POST /api/presence` `{ x, y, z, h, crane }`: relayed to the post's realtime channel.
+- Redis `skyline:{postId}` (hash dateKey → finished daily build).
 - Redis (no expiry, the city persists): `plots:{postId}` (hash userId → plot JSON) and
   `coins:{postId}` (hash userId → coins). Rent is paid out on `GET /api/state`.
 - The server takes the day from its own clock, the user from `context.userId` and the post

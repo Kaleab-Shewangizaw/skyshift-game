@@ -12,12 +12,19 @@ import {
   useRef,
   useState,
 } from 'react';
+import {
+  connectRealtime,
+  context,
+  disconnectRealtime,
+} from '@devvit/web/client';
 import { createRoot } from 'react-dom/client';
 import { dailyBlueprint, planAt, progressOf } from '../shared/blueprints';
+import { parseLiveMessage, type LiveMessage } from '../shared/live';
 import {
   blockKey,
   currentLevel,
   plotAt,
+  placeOnPlot,
   removeFromPlot,
   tilesNeeded,
   type Block,
@@ -59,6 +66,9 @@ import { SitePanel } from './components/SitePanel';
 import { WorkerHud } from './components/WorkerHud';
 import { CraneHud } from './components/CraneHud';
 import { requestTeleport, useKeyboard } from './game/controls';
+import { monuments } from './game/monuments';
+import { applyPieceChange } from './game/livePiece';
+import { activeRemotes, myPosition, updateRemote } from './game/remote';
 import {
   attachLoad,
   dropLoad,
@@ -73,6 +83,7 @@ import {
   type GameService,
   type GameView,
   type LocalService,
+  SESSION_ID,
 } from './game/service';
 import type { CraneAim } from './three/CraneOperator';
 import type { GhostState } from './three/Structure';
@@ -108,7 +119,10 @@ type SiteFx = { work: SiteWork; x: number; z: number; key: number };
 type Aim = {
   spec: PieceSpec;
   level: number;
-  where: 'plot' | 'daily';
+  /** Your plot, a neighbor's plot (helping), or today's build. */
+  where: 'plot' | 'help' | 'daily';
+  /** The neighbor's block, when helping. */
+  block?: Block;
   state: GhostState;
   reason: string | null;
 };
@@ -176,6 +190,17 @@ export const App = () => {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // The grid cell and floor the worker stands on.
+  const [cell, setCell] = useState<{
+    x: number;
+    z: number;
+    level: number;
+  } | null>(null);
+  const onCell = useCallback(
+    (x: number, z: number, level: number) => setCell({ x, z, level }),
+    []
+  );
+
   const onAim = useCallback(
     (spec: PieceSpec, level: number) => setTarget({ spec, level }),
     []
@@ -203,13 +228,17 @@ export const App = () => {
     if (!target || !pieces || !pads || !pallets) return null;
     const key = slotKey(target.spec);
     const owner = plotAt(plots, target.spec);
-    if (owner && owner !== myPlot)
+    if (owner && owner !== myPlot) {
+      // On a neighbor's plot you can add pieces from their plan.
+      const r = placeOnPlot(owner, target.spec, 0, me);
       return {
         ...target,
-        where: 'plot',
-        state: 'bad',
-        reason: `That's u/${owner.owner}'s plot.`,
+        where: 'help',
+        block: owner.block,
+        state: r.ok ? 'ok' : 'bad',
+        reason: r.ok ? null : r.reason,
       };
+    }
     if (owner && myPlot) {
       const there = myPlot.pieces.some((p) => slotKey(p) === key);
       const c = there
@@ -260,21 +289,49 @@ export const App = () => {
     if (!view) return null;
     const t = view.tower;
     const plotTiles = plots.flatMap((p) => p.tiles);
+    const memorial = monuments(view.skyline);
     return {
       ...t,
       site: [...t.site, ...plotTiles],
       pads: [...t.pads, ...plotTiles],
-      pieces: [...t.pieces, ...plots.flatMap((p) => p.pieces)],
+      pieces: [
+        ...t.pieces,
+        ...plots.flatMap((p) => p.pieces),
+        ...memorial.pieces,
+      ],
+      plinths: memorial.plinths,
     };
   }, [view, plots]);
+  // The neighbor's plot the worker is standing on, if any.
+  const visiting = useMemo(
+    () =>
+      cell
+        ? (plots.find(
+            (p) =>
+              p !== myPlot &&
+              p.block.bx === blockOf(cell.x) &&
+              p.block.bz === blockOf(cell.z)
+          ) ?? null)
+        : null,
+    [cell, plots, myPlot]
+  );
+  const visitProgress = useMemo(() => {
+    const lvl = visiting ? currentLevel(visiting) : null;
+    return visiting && lvl
+      ? progressOf(lvl.blueprint(visiting.block), visiting.pieces)
+      : null;
+  }, [visiting]);
   const plan = useMemo(
     () => [
       ...(progress?.missing ?? []),
       ...(myPlot && plotProgress && tilesNeeded(myPlot).length === 0
         ? plotProgress.missing
         : []),
+      ...(visiting && visitProgress && tilesNeeded(visiting).length === 0
+        ? visitProgress.missing
+        : []),
     ],
-    [progress, myPlot, plotProgress]
+    [progress, myPlot, plotProgress, visiting, visitProgress]
   );
 
   // Steel left on the worker's floor, once floors need crane deliveries.
@@ -284,17 +341,56 @@ export const App = () => {
       ? steelOnFloor(pallets, steel, target.level)
       : null;
 
+  // Only the answer to the newest tap is applied, so a slow earlier reply
+  // can't briefly undo a piece placed after it.
+  const actSeq = useRef(0);
   const act = async () => {
     if (!aim || aim.state === 'bad') return;
-    setBusy(true);
+    const removing = aim.state === 'remove';
+    const block =
+      aim.where === 'help'
+        ? (aim.block ?? null)
+        : aim.where === 'plot'
+          ? (myPlot?.block ?? null)
+          : null;
+    // Show it at once with the same rules the server uses; the server confirms.
+    const before = viewRef.current;
+    const shown = before
+      ? applyPieceChange(before, {
+          by: me,
+          block,
+          place: removing ? null : aim.spec,
+          remove: removing ? slotKey(aim.spec) : null,
+        })
+      : null;
+    if (shown) setView(shown);
+    const seq = ++actSeq.current;
+    const latest = () => seq === actSeq.current;
     try {
+      if (aim.where === 'help' && aim.block) {
+        const owner = plots.find(
+          (p) => p.block.bx === aim.block?.bx && p.block.bz === aim.block.bz
+        );
+        const r = await service.plot({
+          op: 'help',
+          block: aim.block,
+          piece: aim.spec,
+        });
+        if (latest() || !r.ok) setView(r.view);
+        if (!r.ok) setNotice(r.reason);
+        else if (r.finished)
+          setCheer(
+            `🤝 You finished u/${owner?.owner ?? 'a neighbor'}'s ${r.finished}!`
+          );
+        return;
+      }
       if (aim.where === 'plot') {
         const r = await service.plot(
-          aim.state === 'remove'
+          removing
             ? { op: 'remove', slot: slotKey(aim.spec) }
             : { op: 'place', piece: aim.spec }
         );
-        setView(r.view);
+        if (latest() || !r.ok) setView(r.view);
         if (!r.ok) setNotice(r.reason);
         else if (r.finished)
           setCheer(
@@ -303,11 +399,11 @@ export const App = () => {
         return;
       }
       const r = await service.build(
-        aim.state === 'remove'
+        removing
           ? { op: 'remove', slot: slotKey(aim.spec) }
           : { op: 'place', piece: aim.spec }
       );
-      setView(r.view);
+      if (latest() || !r.ok) setView(r.view);
       if (!r.ok) setNotice(r.reason);
       else if (daily && progress && progress.done < progress.total) {
         const after = progressOf(daily, r.view.tower.pieces);
@@ -315,11 +411,11 @@ export const App = () => {
           setCheer(`🎉 ${daily.name} is finished! Great work, crew.`);
       }
     } catch (e) {
+      // Couldn't reach the server: take the piece back out.
+      if (before) setView(before);
       setNotice(
         e instanceof Error ? e.message : 'The crew dropped it. Try again.'
       );
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -373,15 +469,6 @@ export const App = () => {
   };
 
   // ---- Leftover steel: a worker beside a pallet can send it back down ----
-  const [cell, setCell] = useState<{
-    x: number;
-    z: number;
-    level: number;
-  } | null>(null);
-  const onCell = useCallback(
-    (x: number, z: number, level: number) => setCell({ x, z, level }),
-    []
-  );
   const nearPallets = useMemo(
     () =>
       cell && pallets
@@ -524,6 +611,96 @@ export const App = () => {
 
   useKeyboard(!siteMode);
 
+  // ---- Live: other players' changes and workers (Reddit only) ----
+  const viewRef = useRef(view);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+  const [live, setLive] = useState<'off' | 'connecting' | 'on'>(
+    backend.kind === 'server' ? 'connecting' : 'off'
+  );
+  const [othersHere, setOthersHere] = useState(0);
+  useEffect(() => {
+    if (backend.kind !== 'server') return;
+    const channel = context.postId;
+    if (!channel) return;
+    // Changes we can't apply piece by piece (site work, deliveries...) reload the state.
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const reloadSoon = () => {
+      if (pending) return;
+      pending = setTimeout(() => {
+        pending = null;
+        service.load().then(setView, () => {});
+      }, 300);
+    };
+    try {
+      connectRealtime<LiveMessage>({
+        channel,
+        onConnect: () => setLive('on'),
+        onDisconnect: () => setLive('connecting'),
+        onMessage: (raw) => {
+          const m = parseLiveMessage(raw);
+          // Our own actions echo back too: we've already shown them.
+          if (!m || m.sid === SESSION_ID) return;
+          if (m.t === 'pos') {
+            updateRemote(m);
+            return;
+          }
+          if (m.t === 'piece') {
+            // Apply the piece right away with the shared rules; reload if we're out of date.
+            const v = viewRef.current;
+            const next = v ? applyPieceChange(v, m) : null;
+            if (next) setView(next);
+            else reloadSoon();
+            return;
+          }
+          reloadSoon();
+        },
+      });
+    } catch (error) {
+      // No realtime (e.g. the permission is missing): the game still works,
+      // it just catches up on the regular refresh instead.
+      console.warn('Realtime unavailable:', error);
+      setTimeout(() => setLive('off'), 0);
+    }
+    return () => {
+      if (pending) clearTimeout(pending);
+      disconnectRealtime(channel);
+    };
+  }, [backend, service]);
+
+  // How many other workers are around, for the live indicator.
+  useEffect(() => {
+    if (backend.kind !== 'server') return;
+    const t = setInterval(() => setOthersHere(activeRemotes().length), 1000);
+    return () => clearInterval(t);
+  }, [backend]);
+
+  // Tell everyone where this worker is: five times a second while moving,
+  // with its velocity so others can glide it smoothly between reports.
+  useEffect(() => {
+    if (backend.kind !== 'server') return;
+    const STEP_MS = 200;
+    let prev = myPosition();
+    let last = { ...prev, at: 0 };
+    const t = setInterval(() => {
+      const p = myPosition();
+      const vx = (p.x - prev.x) / (STEP_MS / 1000);
+      const vz = (p.z - prev.z) / (STEP_MS / 1000);
+      prev = p;
+      const moved =
+        Math.hypot(p.x - last.x, p.z - last.z) > 0.05 ||
+        Math.abs(p.y - last.y) > 0.05 ||
+        Math.abs(p.h - last.h) > 0.05 ||
+        p.crane !== last.crane;
+      const heartbeat = Date.now() - last.at > 3000;
+      if (!moved && !heartbeat) return;
+      last = { ...p, at: Date.now() };
+      service.presence({ ...p, vx, vz });
+    }, STEP_MS);
+    return () => clearInterval(t);
+  }, [backend, service]);
+
   // ---- Loading and refreshing ----
   const load = useCallback(() => {
     service.load().then(
@@ -619,6 +796,7 @@ export const App = () => {
         <Suspense fallback={null}>
           <City3D
             tower={world ?? tower}
+            plinths={world?.plinths ?? []}
             challenge={challenge}
             insetTop={insets.top}
             insetBottom={insets.bottom}
@@ -675,6 +853,16 @@ export const App = () => {
             <span className="chip px-2.5 py-0.5 text-xs font-bold">
               ⏱ {endsIn}
             </span>
+            {live !== 'off' && (
+              <span
+                className={`chip px-2.5 py-0.5 text-xs font-bold ${live === 'on' ? 'text-[#1f7a35]' : 'text-[#9a8466]'}`}
+                title="Realtime connection to this post"
+              >
+                {live === 'on'
+                  ? `📡 Live · ${othersHere} other${othersHere === 1 ? '' : 's'} here`
+                  : '📡 Connecting…'}
+              </span>
+            )}
           </div>
         </header>
 
@@ -745,7 +933,18 @@ export const App = () => {
           </div>
         )}
 
-        {!siteMode && onMyPlot && myPlot ? (
+        {!siteMode && visiting ? (
+          <div className="pointer-events-auto">
+            <PlotCard
+              plot={visiting}
+              progress={visitProgress}
+              coins={coins}
+              busy={plotBusy}
+              onBuy={buyLand}
+              visitor
+            />
+          </div>
+        ) : !siteMode && onMyPlot && myPlot ? (
           <div className="pointer-events-auto">
             <PlotCard
               plot={myPlot}
